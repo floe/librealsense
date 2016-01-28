@@ -30,6 +30,39 @@ struct rgb_pixel
 
 GstElement *gpipeline, *appsrc, *conv, *videosink;
 
+/* Initialize a 2D perspective matrix, you can use
+ * cvGetPerspectiveTransform() from OpenCV to build it
+ * from a quad-to-quad transformation */
+gdouble pm[9] = {
+  2.0, 0.83, -400,
+  0.0, 2.0,  0.0,
+  0.0, 0.0,  1.0
+};
+
+gdouble im[9] = {
+  1.0, 0.0, 0.0,
+  0.0, 1.0, 0.0,
+  0.0, 0.0, 1.0
+};
+
+void set_matrix(GstElement *element, gdouble m[9])
+{
+	GValueArray *va;
+	GValue v = G_VALUE_INIT;
+	guint i;
+
+	va = g_value_array_new(1);
+
+	g_value_init(&v, G_TYPE_DOUBLE);
+	for (i = 0; i < 9; i++) {
+		g_value_set_double(&v, m[i]);
+		g_value_array_append(va, &v);
+		g_value_reset(&v);
+	}
+	g_object_set(G_OBJECT(element), "matrix", va, NULL);
+	g_value_array_free(va);
+}
+
 gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 
   if (GST_EVENT_TYPE (event) != GST_EVENT_NAVIGATION)
@@ -78,9 +111,14 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   gpipeline = gst_pipeline_new ("pipeline");
   appsrc = gst_element_factory_make ("appsrc", "source");
 
+	GstElement* perspective = gst_element_factory_make("perspective", "persp");
+	set_matrix(perspective,im);
+
+  // attach event listener to appsrc pad
   GstPad* srcpad = gst_element_get_static_pad (appsrc, "src");
   gst_pad_set_event_function( srcpad, (GstPadEventFunction)pad_event );
 
+  // create pipeline from string
   const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! fpsdisplaysink";
   videosink = gst_parse_bin_from_description(pipe_desc,TRUE,NULL);
 
@@ -92,8 +130,8 @@ void gstreamer_init(gint argc, gchar *argv[]) {
 				     "height", G_TYPE_INT, 1080,
 				     "framerate", GST_TYPE_FRACTION, 0, 1,
 				     NULL), NULL);
-  gst_bin_add_many (GST_BIN (gpipeline), appsrc, videosink, NULL);
-  gst_element_link_many (appsrc, videosink, NULL);
+  gst_bin_add_many (GST_BIN (gpipeline), appsrc, perspective, videosink, NULL);
+  gst_element_link_many (appsrc, perspective, videosink, NULL);
 
   /* setup appsrc */
   g_object_set (G_OBJECT (appsrc),
@@ -129,7 +167,7 @@ int main(int argc, char * argv[]) try
     printf("    Serial number: %s\n", dev.get_serial());
     printf("    Firmware version: %s\n\n", dev.get_firmware_version());
 
-    dev.enable_stream(rs::stream::depth, rs::preset::best_quality);
+    dev.enable_stream(rs::stream::depth, rs::preset::best_quality); // 640,  480, rs::format::z16,  30);
     dev.enable_stream(rs::stream::color, 1920, 1080, rs::format::rgb8, 30);
     dev.start();
 
@@ -140,6 +178,10 @@ int main(int argc, char * argv[]) try
 
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
         const uint16_t* depth_data = (const uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
+
+        // TODO: depth filtering, i.e. background subtraction + threshold
+
+        // TODO: optimize with SSE/AVX?
 
         for (int i = 0; i < 1920*1080; i++) {
           if (depth_data[i] == 0) {
