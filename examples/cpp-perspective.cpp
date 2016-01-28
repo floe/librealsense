@@ -2,14 +2,11 @@
 // Copyright(c) 2015 Intel Corporation. All Rights Reserved.
 
 #include <librealsense/rs.hpp>
-#include "example.hpp"
 
 #include <sstream>
 #include <iostream>
 #include <iomanip>
 #include <thread>
-
-texture_buffer buffers[6];
 
 #pragma pack(push, 1)
 struct rgb_pixel
@@ -18,7 +15,10 @@ struct rgb_pixel
 };
 #pragma pack(pop)
 
+////////////////////////////////////////////////////////////////////////////////
+//
 // GStreamer stuff
+//
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
@@ -28,6 +28,30 @@ struct rgb_pixel
 #include <immintrin.h>
 
 GstElement *gpipeline, *appsrc, *conv, *videosink;
+
+gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
+
+  if (GST_EVENT_TYPE (event) != GST_EVENT_NAVIGATION)
+    return gst_pad_event_default(pad,parent,event);
+
+  const GstStructure *s = gst_event_get_structure (event);
+  const gchar* type = gst_structure_get_string (s, "event");
+  double x,y;
+
+  if (g_str_equal (type, "mouse-move")) {
+    gst_structure_get_double (s, "pointer_x", &x);
+    gst_structure_get_double (s, "pointer_y", &y);
+  } else if (g_str_equal (type, "mouse-button-press")) {
+    gst_structure_get_double (s, "pointer_x", &x);
+    gst_structure_get_double (s, "pointer_y", &y);
+  } else if (g_str_equal (type, "mouse-button-release")) {
+    gst_structure_get_double (s, "pointer_x", &x);
+    gst_structure_get_double (s, "pointer_y", &y);
+  }
+  std::cout << type << " " << x << "," << y << std::endl;
+
+  return true;
+}
 
 void buffer_destroy(gpointer data) {
   //delete done;
@@ -50,13 +74,16 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   gpipeline = gst_pipeline_new ("pipeline");
   appsrc = gst_element_factory_make ("appsrc", "source");
 
-  const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! autovideosink";
+  GstPad* srcpad = gst_element_get_static_pad (appsrc, "src");
+  gst_pad_set_event_function( srcpad, (GstPadEventFunction)pad_event );
+
+  const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! fpsdisplaysink";
   videosink = gst_parse_bin_from_description(pipe_desc,TRUE,NULL);
 
   /* setup */
   g_object_set (G_OBJECT (appsrc), "caps",
     gst_caps_new_simple ("video/x-raw",
-				     "format", G_TYPE_STRING, "BGR",
+				     "format", G_TYPE_STRING, "RGB",
 				     "width", G_TYPE_INT, 1920,
 				     "height", G_TYPE_INT, 1080,
 				     "framerate", GST_TYPE_FRACTION, 0, 1,
@@ -78,7 +105,10 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   gst_element_set_state (gpipeline, GST_STATE_PLAYING);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+//
 // realsense stuff
+//
 
 int main(int argc, char * argv[]) try
 {
@@ -93,45 +123,19 @@ int main(int argc, char * argv[]) try
 
     printf("\nUsing device 0, an %s\n", dev.get_name());
     printf("    Serial number: %s\n", dev.get_serial());
-    printf("    Firmware version: %s\n", dev.get_firmware_version());
+    printf("    Firmware version: %s\n\n", dev.get_firmware_version());
 
     dev.enable_stream(rs::stream::depth, rs::preset::best_quality);
     dev.enable_stream(rs::stream::color, 1920, 1080, rs::format::rgb8, 30);
-    try { dev.enable_stream(rs::stream::infrared2, rs::preset::best_quality); } catch(...) {}
     dev.start();
 
-    // Open a GLFW window
-    glfwInit();
-    std::ostringstream ss; ss << "CPP Image Alignment Example (" << dev.get_name() << ")";
-    GLFWwindow * win = glfwCreateWindow( 1920, 1080, ss.str().c_str(), 0, 0);
-    glfwMakeContextCurrent(win);
-
-    while (!glfwWindowShouldClose(win))
+    while (1)
     {
         // Wait for new images
-        glfwPollEvents();
         dev.wait_for_frames();
 
-        // mouse handling
-        if (glfwGetMouseButton(win,GLFW_MOUSE_BUTTON_LEFT)) {
-          double x,y; glfwGetCursorPos(win,&x,&y);
-          std::cout << "click @ " << x << "," << y << std::endl;
-        }
-
-        // Clear the framebuffer
-        int w,h;
-        glfwGetFramebufferSize(win, &w, &h);
-        glViewport(0, 0, w, h);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        // Draw the images        
-        glPushMatrix();
-        glfwGetWindowSize(win, &w, &h);
-        glOrtho(0, w, h, 0, -1, +1);
-        int s = w / (dev.is_stream_enabled(rs::stream::infrared2) ? 3 : 2);
-
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
-        const uint16_t* depth_data = (const uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_rectified_color);
+        const uint16_t* depth_data = (const uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
 
         for (int i = 0; i < 1920*1080; i++) {
           if (depth_data[i] == 0) {
@@ -141,22 +145,14 @@ int main(int argc, char * argv[]) try
           }
         }
 
-        buffers[2].show(color_data, 1920, 1080, rs::format::rgb8, "aligned (HD)", 0, 0, w, h);
-        //buffers[2].show(dev, rs::stream::depth_aligned_to_color, 0, 0, w, h);
-
         prepare_buffer((GstAppSrc*)appsrc,color_data);
         g_main_context_iteration(g_main_context_default(),FALSE);
-
-        glPopMatrix();
-        glfwSwapBuffers(win);
     }
 
     /* clean up */
     gst_element_set_state (gpipeline, GST_STATE_NULL);
     gst_object_unref (GST_OBJECT (gpipeline));
 
-    glfwDestroyWindow(win);
-    glfwTerminate();
     return EXIT_SUCCESS;
 }
 catch(const rs::error & e)
