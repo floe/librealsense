@@ -18,6 +18,69 @@ struct rgb_pixel
 };
 #pragma pack(pop)
 
+// GStreamer stuff
+
+#include <gst/gst.h>
+#include <gst/app/gstappsrc.h>
+
+#include <stdint.h>
+
+#include <immintrin.h>
+
+GstElement *gpipeline, *appsrc, *conv, *videosink;
+
+/*void buffer_destroy(gpointer data) {
+  //libfreenect2::Frame* done = (libfreenect2::Frame*)data;
+  //delete done;
+}
+
+GstFlowReturn prepare_buffer(GstAppSrc* appsrc, libfreenect2::Frame* frame) {
+
+  guint size = 1920 * 1080 * 4;
+  GstBuffer *buffer = gst_buffer_new_wrapped_full( (GstMemoryFlags)0, (gpointer)(frame->data), size, 0, size, frame, buffer_destroy );
+
+  return gst_app_src_push_buffer(appsrc, buffer);
+}*/
+
+void gstreamer_init(gint argc, gchar *argv[]) {
+
+  /* init GStreamer */
+  gst_init (&argc, &argv);
+
+  /* setup pipeline */
+  gpipeline = gst_pipeline_new ("pipeline");
+  appsrc = gst_element_factory_make ("appsrc", "source");
+
+  const char* pipe_desc = argv[2] ? argv[2] : "videoconvert ! autovideosink";
+  videosink = gst_parse_bin_from_description(pipe_desc,TRUE,NULL);
+
+  /* setup */
+  g_object_set (G_OBJECT (appsrc), "caps",
+    gst_caps_new_simple ("video/x-raw",
+				     "format", G_TYPE_STRING, "BGRA",
+				     "width", G_TYPE_INT, 1920,
+				     "height", G_TYPE_INT, 1080,
+				     "framerate", GST_TYPE_FRACTION, 0, 1,
+				     NULL), NULL);
+  gst_bin_add_many (GST_BIN (gpipeline), appsrc, videosink, NULL);
+  gst_element_link_many (appsrc, videosink, NULL);
+
+  /* setup appsrc */
+  g_object_set (G_OBJECT (appsrc),
+		"stream-type", 0, // GST_APP_STREAM_TYPE_STREAM
+		"format", GST_FORMAT_TIME,
+    "is-live", TRUE,
+    "min-latency", 0,
+    "max-latency", gst_util_uint64_scale_int (1, GST_SECOND, 30),
+    "do-timestamp", TRUE,
+    NULL);
+
+  /* play */
+  gst_element_set_state (gpipeline, GST_STATE_PLAYING);
+}
+
+// realsense stuff
+
 int main(int argc, char * argv[]) try
 {
     rs::log_to_console(rs::log_severity::warn);
@@ -47,6 +110,12 @@ int main(int argc, char * argv[]) try
         // Wait for new images
         glfwPollEvents();
         dev.wait_for_frames();
+
+        // mouse handling
+        if (glfwGetMouseButton(win,GLFW_MOUSE_BUTTON_LEFT)) {
+          double x,y; glfwGetCursorPos(win,&x,&y);
+          std::cout << "click @ " << x << "," << y << std::endl;
+        }
 
         // Clear the framebuffer
         int w,h;
