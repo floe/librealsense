@@ -29,18 +29,17 @@ struct rgb_pixel
 
 GstElement *gpipeline, *appsrc, *conv, *videosink;
 
-/*void buffer_destroy(gpointer data) {
-  //libfreenect2::Frame* done = (libfreenect2::Frame*)data;
+void buffer_destroy(gpointer data) {
   //delete done;
 }
 
-GstFlowReturn prepare_buffer(GstAppSrc* appsrc, libfreenect2::Frame* frame) {
+GstFlowReturn prepare_buffer(GstAppSrc* appsrc, uint8_t* color_data) {
 
-  guint size = 1920 * 1080 * 4;
-  GstBuffer *buffer = gst_buffer_new_wrapped_full( (GstMemoryFlags)0, (gpointer)(frame->data), size, 0, size, frame, buffer_destroy );
+  guint size = 1920 * 1080 * 3;
+  GstBuffer *buffer = gst_buffer_new_wrapped_full( (GstMemoryFlags)0, (gpointer)(color_data), size, 0, size, color_data, buffer_destroy );
 
   return gst_app_src_push_buffer(appsrc, buffer);
-}*/
+}
 
 void gstreamer_init(gint argc, gchar *argv[]) {
 
@@ -51,13 +50,13 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   gpipeline = gst_pipeline_new ("pipeline");
   appsrc = gst_element_factory_make ("appsrc", "source");
 
-  const char* pipe_desc = argv[2] ? argv[2] : "videoconvert ! autovideosink";
+  const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! autovideosink";
   videosink = gst_parse_bin_from_description(pipe_desc,TRUE,NULL);
 
   /* setup */
   g_object_set (G_OBJECT (appsrc), "caps",
     gst_caps_new_simple ("video/x-raw",
-				     "format", G_TYPE_STRING, "BGRA",
+				     "format", G_TYPE_STRING, "BGR",
 				     "width", G_TYPE_INT, 1920,
 				     "height", G_TYPE_INT, 1080,
 				     "framerate", GST_TYPE_FRACTION, 0, 1,
@@ -83,6 +82,8 @@ void gstreamer_init(gint argc, gchar *argv[]) {
 
 int main(int argc, char * argv[]) try
 {
+    gstreamer_init(argc,argv);
+
     rs::log_to_console(rs::log_severity::warn);
     //rs::log_to_file(rs::log_severity::debug, "librealsense.log");
 
@@ -130,7 +131,7 @@ int main(int argc, char * argv[]) try
         int s = w / (dev.is_stream_enabled(rs::stream::infrared2) ? 3 : 2);
 
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
-        const uint16_t* depth_data = (const uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
+        const uint16_t* depth_data = (const uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_rectified_color);
 
         for (int i = 0; i < 1920*1080; i++) {
           if (depth_data[i] == 0) {
@@ -143,9 +144,16 @@ int main(int argc, char * argv[]) try
         buffers[2].show(color_data, 1920, 1080, rs::format::rgb8, "aligned (HD)", 0, 0, w, h);
         //buffers[2].show(dev, rs::stream::depth_aligned_to_color, 0, 0, w, h);
 
+        prepare_buffer((GstAppSrc*)appsrc,color_data);
+        g_main_context_iteration(g_main_context_default(),FALSE);
+
         glPopMatrix();
         glfwSwapBuffers(win);
     }
+
+    /* clean up */
+    gst_element_set_state (gpipeline, GST_STATE_NULL);
+    gst_object_unref (GST_OBJECT (gpipeline));
 
     glfwDestroyWindow(win);
     glfwTerminate();
