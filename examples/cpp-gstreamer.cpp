@@ -22,6 +22,7 @@ struct rgb_pixel
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
+#include <gst/video/navigation.h>
 
 #include <stdint.h>
 
@@ -34,21 +35,24 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
   if (GST_EVENT_TYPE (event) != GST_EVENT_NAVIGATION)
     return gst_pad_event_default(pad,parent,event);
 
-  const GstStructure *s = gst_event_get_structure (event);
-  const gchar* type = gst_structure_get_string (s, "event");
-  double x,y;
+  double x,y; int b;
 
-  if (g_str_equal (type, "mouse-move")) {
-    gst_structure_get_double (s, "pointer_x", &x);
-    gst_structure_get_double (s, "pointer_y", &y);
-  } else if (g_str_equal (type, "mouse-button-press")) {
-    gst_structure_get_double (s, "pointer_x", &x);
-    gst_structure_get_double (s, "pointer_y", &y);
-  } else if (g_str_equal (type, "mouse-button-release")) {
-    gst_structure_get_double (s, "pointer_x", &x);
-    gst_structure_get_double (s, "pointer_y", &y);
+  switch (gst_navigation_event_get_type(event)) {
+
+    case GST_NAVIGATION_EVENT_MOUSE_BUTTON_PRESS:
+    case GST_NAVIGATION_EVENT_MOUSE_BUTTON_RELEASE:
+      gst_navigation_event_parse_mouse_button_event(event,&b,&x,&y);
+      break;
+
+    case GST_NAVIGATION_EVENT_KEY_PRESS:
+      //gst_navigation_event_parse_key_event (GstEvent *event,
+      break;
+
+    default:
+      return false;
   }
-  std::cout << type << " " << x << "," << y << std::endl;
+
+  std::cout << b << " " << x << "," << y << std::endl;
 
   return true;
 }
