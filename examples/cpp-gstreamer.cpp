@@ -60,6 +60,7 @@ Mat calcPerspective() {
 #include <immintrin.h>
 
 uint16_t* background;
+bool filter = false;
 
 GstElement *gpipeline, *appsrc, *conv, *videosink, *perspective;
 
@@ -107,9 +108,10 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 
     case GST_NAVIGATION_EVENT_KEY_PRESS:
       gst_navigation_event_parse_key_event(event,&key);
-      if (key == std::string("space")) {
+      if (key == std::string("space"))
         set_matrix(perspective,im);
-      }
+      if (*key == 'f')
+        filter = !filter;
       break;
 
     default:
@@ -126,11 +128,12 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 
 void buffer_destroy(gpointer data) {
   delete[] data;
+  std::cout << "delete frame " << data << std::endl;
 }
 
-GstFlowReturn prepare_buffer(GstAppSrc* appsrc, uint8_t* color_data) {
+GstFlowReturn prepare_buffer(GstAppSrc* appsrc, uint32_t* color_data) {
 
-  guint size = 1920 * 1080 * 3;
+  guint size = 1920 * 1080 * 4;
   GstBuffer *buffer = gst_buffer_new_wrapped_full( (GstMemoryFlags)0, (gpointer)(color_data), size, 0, size, color_data, buffer_destroy );
 
   return gst_app_src_push_buffer(appsrc, buffer);
@@ -153,19 +156,22 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   gst_pad_set_event_function( srcpad, (GstPadEventFunction)pad_event );
 
   // create pipeline from string
-  const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! fpsdisplaysink"; // sync=false
+  const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! fpsdisplaysink sync=false";
   videosink = gst_parse_bin_from_description(pipe_desc,TRUE,NULL);
 
   /* setup */
   g_object_set (G_OBJECT (appsrc), "caps",
     gst_caps_new_simple ("video/x-raw",
-				     "format", G_TYPE_STRING, "RGB",
+				     "format", G_TYPE_STRING, "RGBA",
 				     "width", G_TYPE_INT, 1920,
 				     "height", G_TYPE_INT, 1080,
 				     "framerate", GST_TYPE_FRACTION, 0, 1,
 				     NULL), NULL);
-  gst_bin_add_many (GST_BIN (gpipeline), appsrc, perspective, videosink, NULL);
-  gst_element_link_many (appsrc, perspective, videosink, NULL);
+  //gst_bin_add_many (GST_BIN (gpipeline), appsrc, perspective, videosink, NULL);
+  //gst_element_link_many (appsrc, perspective, videosink, NULL);
+
+  gst_bin_add_many (GST_BIN (gpipeline), appsrc, videosink, NULL);
+  gst_element_link_many (appsrc, videosink, NULL);
 
   /* setup appsrc */
   g_object_set (G_OBJECT (appsrc),
@@ -211,10 +217,12 @@ int main(int argc, char * argv[]) try
         // Wait for new images
         dev.wait_for_frames();
 
+        // TODO: should use rectified streams?
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
-        const uint16_t* depth_data = (const uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
+        uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
 
-        uint8_t* new_frame = new uint8_t[1920*1080*3];
+        uint32_t* new_frame = new uint32_t[1920*1080];
+        std::cout << "new frame " << new_frame << std::endl;
 
         // TODO: optimize with SSE/AVX?
 
@@ -222,18 +230,13 @@ int main(int argc, char * argv[]) try
 
         for (int i = 0; i < 1920*1080; i++) {
           if ((depth_data[i] == 0) || (background[i] - depth_data[i] < 96)) {
-            new_frame[3*i+0] = 0;
-            new_frame[3*i+1] = 0;
-            new_frame[3*i+2] = 0;
+            new_frame[i] = 0;
           } else {
-            new_frame[3*i+0] = color_data[3*i+0];
-            new_frame[3*i+1] = color_data[3*i+1];
-            new_frame[3*i+2] = color_data[3*i+2];
+            new_frame[i] = *((uint32_t*)(color_data+3*i));
           }
           background[i] = background[i] * 0.95 + depth_data[i] * 0.05;
         }
 
-        // TODO: buffer is overwritten asynchronously
         prepare_buffer((GstAppSrc*)appsrc,new_frame);
         g_main_context_iteration(g_main_context_default(),FALSE);
     }
