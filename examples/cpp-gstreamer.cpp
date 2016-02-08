@@ -17,6 +17,37 @@ struct rgb_pixel
 
 ////////////////////////////////////////////////////////////////////////////////
 //
+// OpenCV stuff
+//
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <vector>
+
+using namespace cv;
+
+std::vector<Point2f> src;
+std::vector<Point2f> dst;
+
+Mat calcPerspective() {
+
+  Mat result;
+
+  dst.push_back(Point2f(   0,   0));
+  dst.push_back(Point2f(1920,   0));
+  dst.push_back(Point2f(1920,1080));
+  dst.push_back(Point2f(   0,1080));
+
+  result = getPerspectiveTransform(dst,src);
+
+  src.clear();
+  dst.clear();
+
+  return result;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
 // GStreamer stuff
 //
 
@@ -28,7 +59,7 @@ struct rgb_pixel
 
 #include <immintrin.h>
 
-GstElement *gpipeline, *appsrc, *conv, *videosink;
+GstElement *gpipeline, *appsrc, *conv, *videosink, *perspective;
 
 /* Initialize a 2D perspective matrix, you can use
  * cvGetPerspectiveTransform() from OpenCV to build it
@@ -72,20 +103,24 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 
   switch (gst_navigation_event_get_type(event)) {
 
-    case GST_NAVIGATION_EVENT_MOUSE_BUTTON_PRESS:
     case GST_NAVIGATION_EVENT_MOUSE_BUTTON_RELEASE:
       gst_navigation_event_parse_mouse_button_event(event,&b,&x,&y);
+      src.push_back(Point2f(x,y));
       break;
 
     case GST_NAVIGATION_EVENT_KEY_PRESS:
       //gst_navigation_event_parse_key_event (GstEvent *event,
+      set_matrix(perspective,im);
       break;
 
     default:
       return false;
   }
 
-  std::cout << b << " " << x << "," << y << std::endl;
+  if (src.size() == 4) {
+    Mat r = calcPerspective();
+    set_matrix(perspective,r.ptr<gdouble>(0));
+  }
 
   return true;
 }
@@ -111,7 +146,7 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   gpipeline = gst_pipeline_new ("pipeline");
   appsrc = gst_element_factory_make ("appsrc", "source");
 
-	GstElement* perspective = gst_element_factory_make("perspective", "persp");
+	perspective = gst_element_factory_make("perspective", "persp");
 	set_matrix(perspective,im);
 
   // attach event listener to appsrc pad

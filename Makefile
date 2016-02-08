@@ -15,7 +15,7 @@ OBJECTS := $(addprefix obj/, $(addsuffix .o, $(OBJECTS)))
 
 # Sets of flags used by the example programs
 REALSENSE_FLAGS := -Iinclude -Llib -lrealsense -lm
-GLFW3_FLAGS := `pkg-config --cflags --libs glfw3 gl glu gstreamer-1.0` -lgstapp-1.0 -lgstvideo-1.0 -ggdb
+GLFW3_FLAGS := `pkg-config --cflags --libs glfw3 gl glu gstreamer-1.0` -lgstapp-1.0 -lgstvideo-1.0 -ggdb -lopencv_core -lopencv_imgproc
 
 # Compute a list of all example program binaries
 EXAMPLES := $(wildcard examples/*.c)
@@ -40,6 +40,8 @@ prepare:
 	mkdir -p obj/libuvc
 	mkdir -p lib
 	mkdir -p bin
+
+.PHONY: all install clean library prepare
 
 # Rules for building the sample programs
 bin/c-%: examples/c-%.c library
