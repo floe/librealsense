@@ -23,7 +23,7 @@ EXAMPLES += $(wildcard examples/*.cpp)
 EXAMPLES := $(addprefix bin/, $(notdir $(basename $(EXAMPLES))))
 
 # Aliases for convenience
-all: examples $(EXAMPLES)
+all: prepare examples $(EXAMPLES)
 
 install: library
 	cp lib/librealsense.so /usr/local/lib
@@ -41,17 +41,15 @@ prepare:
 	mkdir -p lib
 	mkdir -p bin
 
-.PHONY: all install clean library prepare
-
 # Rules for building the sample programs
-bin/c-%: examples/c-%.c library
+bin/c-%: examples/c-%.c lib/librealsense.so
 	$(CC) $< $(REALSENSE_FLAGS) $(GLFW3_FLAGS) -o $@
 
-bin/cpp-%: examples/cpp-%.cpp library
+bin/cpp-%: examples/cpp-%.cpp lib/librealsense.so
 	$(CXX) $< -std=c++11 $(REALSENSE_FLAGS) $(GLFW3_FLAGS) -o $@
 
 # Rules for building the library itself
-lib/librealsense.so: prepare $(OBJECTS)
+lib/librealsense.so: $(OBJECTS)
 	$(CXX) -std=c++11 -shared $(OBJECTS) $(LIBUSB_FLAGS) -o $@
 
 # Rules for compiling librealsense source
