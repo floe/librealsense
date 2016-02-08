@@ -64,12 +64,6 @@ GstElement *gpipeline, *appsrc, *conv, *videosink, *perspective;
 /* Initialize a 2D perspective matrix, you can use
  * cvGetPerspectiveTransform() from OpenCV to build it
  * from a quad-to-quad transformation */
-gdouble pm[9] = {
-  2.0, 0.83, -400,
-  0.0, 2.0,  0.0,
-  0.0, 0.0,  1.0
-};
-
 gdouble im[9] = {
   1.0, 0.0, 0.0,
   0.0, 1.0, 0.0,
@@ -100,6 +94,7 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
     return gst_pad_event_default(pad,parent,event);
 
   double x,y; int b;
+  const gchar* key;
 
   switch (gst_navigation_event_get_type(event)) {
 
@@ -109,8 +104,10 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
       break;
 
     case GST_NAVIGATION_EVENT_KEY_PRESS:
-      //gst_navigation_event_parse_key_event (GstEvent *event,
-      set_matrix(perspective,im);
+      gst_navigation_event_parse_key_event(event,&key);
+      if (key == std::string("space")) {
+        set_matrix(perspective,im);
+      }
       break;
 
     default:
@@ -218,6 +215,8 @@ int main(int argc, char * argv[]) try
 
         // TODO: optimize with SSE/AVX?
 
+        // TODO: perform registration _after_ background subtraction
+
         for (int i = 0; i < 1920*1080; i++) {
           if (depth_data[i] == 0) {
             color_data[3*i+0] = 0;
@@ -226,6 +225,7 @@ int main(int argc, char * argv[]) try
           }
         }
 
+        // TODO: buffer is overwritten asynchronously
         prepare_buffer((GstAppSrc*)appsrc,color_data);
         g_main_context_iteration(g_main_context_default(),FALSE);
     }
