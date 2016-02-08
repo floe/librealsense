@@ -15,7 +15,7 @@ OBJECTS := $(addprefix obj/, $(addsuffix .o, $(OBJECTS)))
 
 # Sets of flags used by the example programs
 REALSENSE_FLAGS := -Iinclude -Llib -lrealsense -lm
-GLFW3_FLAGS := `pkg-config --cflags --libs glfw3 gl glu gstreamer-1.0` -lgstapp-1.0
+GLFW3_FLAGS := `pkg-config --cflags --libs glfw3 gl glu gstreamer-1.0` -lgstapp-1.0 -lgstvideo-1.0 -ggdb
 
 # Compute a list of all example program binaries
 EXAMPLES := $(wildcard examples/*.c)
