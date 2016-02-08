@@ -59,6 +59,8 @@ Mat calcPerspective() {
 
 #include <immintrin.h>
 
+uint16_t* background;
+
 GstElement *gpipeline, *appsrc, *conv, *videosink, *perspective;
 
 /* Initialize a 2D perspective matrix, you can use
@@ -123,7 +125,7 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 }
 
 void buffer_destroy(gpointer data) {
-  //delete done;
+  delete[] data;
 }
 
 GstFlowReturn prepare_buffer(GstAppSrc* appsrc, uint8_t* color_data) {
@@ -151,7 +153,7 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   gst_pad_set_event_function( srcpad, (GstPadEventFunction)pad_event );
 
   // create pipeline from string
-  const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! fpsdisplaysink";
+  const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! fpsdisplaysink"; // sync=false
   videosink = gst_parse_bin_from_description(pipe_desc,TRUE,NULL);
 
   /* setup */
@@ -187,6 +189,7 @@ void gstreamer_init(gint argc, gchar *argv[]) {
 int main(int argc, char * argv[]) try
 {
     gstreamer_init(argc,argv);
+    background = new uint16_t[1920*1080];
 
     rs::log_to_console(rs::log_severity::warn);
     //rs::log_to_file(rs::log_severity::debug, "librealsense.log");
@@ -211,22 +214,27 @@ int main(int argc, char * argv[]) try
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
         const uint16_t* depth_data = (const uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
 
-        // TODO: depth filtering, i.e. background subtraction + threshold
+        uint8_t* new_frame = new uint8_t[1920*1080*3];
 
         // TODO: optimize with SSE/AVX?
 
         // TODO: perform registration _after_ background subtraction
 
         for (int i = 0; i < 1920*1080; i++) {
-          if (depth_data[i] == 0) {
-            color_data[3*i+0] = 0;
-            color_data[3*i+1] = 0;
-            color_data[3*i+2] = 0;
+          if ((depth_data[i] == 0) || (background[i] - depth_data[i] < 96)) {
+            new_frame[3*i+0] = 0;
+            new_frame[3*i+1] = 0;
+            new_frame[3*i+2] = 0;
+          } else {
+            new_frame[3*i+0] = color_data[3*i+0];
+            new_frame[3*i+1] = color_data[3*i+1];
+            new_frame[3*i+2] = color_data[3*i+2];
           }
+          background[i] = background[i] * 0.95 + depth_data[i] * 0.05;
         }
 
         // TODO: buffer is overwritten asynchronously
-        prepare_buffer((GstAppSrc*)appsrc,color_data);
+        prepare_buffer((GstAppSrc*)appsrc,new_frame);
         g_main_context_iteration(g_main_context_default(),FALSE);
     }
 
