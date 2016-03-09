@@ -73,6 +73,8 @@ gdouble im[9] = {
   0.0, 0.0, 1.0
 };
 
+// TODO: forget about gst-perspective, just use cvWarpPerspective instead
+// http://docs.opencv.org/2.4/modules/imgproc/doc/geometric_transformations.html#warpperspective
 void set_matrix(GstElement *element, gdouble m[9])
 {
 	GValueArray *va;
@@ -127,8 +129,8 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 }
 
 void buffer_destroy(gpointer data) {
-  delete[] data;
-  std::cout << "delete frame " << data << std::endl;
+  free(data);
+  //delete[] data;
 }
 
 GstFlowReturn prepare_buffer(GstAppSrc* appsrc, uint32_t* color_data) {
@@ -159,6 +161,7 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! fpsdisplaysink sync=false";
   videosink = gst_parse_bin_from_description(pipe_desc,TRUE,NULL);
 
+  // TODO: output only 1280x720 post-perspective
   /* setup */
   g_object_set (G_OBJECT (appsrc), "caps",
     gst_caps_new_simple ("video/x-raw",
@@ -167,19 +170,15 @@ void gstreamer_init(gint argc, gchar *argv[]) {
 				     "height", G_TYPE_INT, 1080,
 				     "framerate", GST_TYPE_FRACTION, 0, 1,
 				     NULL), NULL);
-  //gst_bin_add_many (GST_BIN (gpipeline), appsrc, perspective, videosink, NULL);
-  //gst_element_link_many (appsrc, perspective, videosink, NULL);
-
-  gst_bin_add_many (GST_BIN (gpipeline), appsrc, videosink, NULL);
-  gst_element_link_many (appsrc, videosink, NULL);
+  gst_bin_add_many (GST_BIN (gpipeline), appsrc, perspective, videosink, NULL);
+  gst_element_link_many (appsrc, perspective, videosink, NULL);
 
   /* setup appsrc */
   g_object_set (G_OBJECT (appsrc),
 		"stream-type", 0, // GST_APP_STREAM_TYPE_STREAM
 		"format", GST_FORMAT_TIME,
     "is-live", TRUE,
-    "min-latency", 0,
-    "max-latency", gst_util_uint64_scale_int (1, GST_SECOND, 30),
+    "block", TRUE,
     "do-timestamp", TRUE,
     NULL);
 
@@ -221,8 +220,8 @@ int main(int argc, char * argv[]) try
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
         uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
 
-        uint32_t* new_frame = new uint32_t[1920*1080];
-        std::cout << "new frame " << new_frame << std::endl;
+        // calloc is never slower, and often _much_ faster, than malloc+memset
+        uint32_t* new_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
 
         // TODO: optimize with SSE/AVX?
 
