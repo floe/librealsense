@@ -29,6 +29,7 @@ Librealsense requires two external dependencies, GLFW3 (all platforms) and libus
 * [Functionality](#functionality)
 * [Installation Guide](#installation-guide)
 * [Hardware Requirements](#hardware-requirements)
+* [Integrations](#integrations)
 * [Documentation](#documentation)
 
 ## Compatible Devices
@@ -66,7 +67,7 @@ All RealSense™ cameras ship with proprietary firmware. This firmware is period
 
 # Installation Guide
 
-librealsense communicates with RealSense™ devices directly via the UVC and USB protocols. It does not link against the RealSense SDK™ runtime. Most of the library source code is platform agnostic, but there is a small UVC abstraction layer with platform-specific backends, including:
+librealsense communicates with RealSense™ devices directly via the UVC and USB protocols. It does not link against the RealSense™ SDK runtime. Most of the library source code is platform agnostic, but there is a small UVC abstraction layer with platform-specific backends, including:
   * A video4linux2 backend which provides kernel-space access to UVC devices on Linux.
   * A libuvc backend which provides user-space access to UVC devices on Linux and Mac OS X (built with libusb).
   * A Windows Media Foundation backend which provides kernel-space access to UVC devices on Windows 8.1 and above.
@@ -76,11 +77,22 @@ librealsense communicates with RealSense™ devices directly via the UVC and USB
 ## Hardware Requirements
 Developer kits containing the necessary hardware to use this library are available for purchase at [this link](http://click.intel.com/realsense.html). In addition, several consumer tablets and laptops with integrated cameras may also function, such as the [HP Spectre x2 with R200](http://store.hp.com/us/en/ContentView?storeId=10151&langId=-1&catalogId=10051&eSpotName=new-detachable).
 
-Developer kits require USB 3.0. Not all USB host chipsets are compatible with librealsense, although it has been validated with recent generations of the Intel Host Controller chipset. An exhaustive list of incompatible hardware is not presently provided. On x86, a Haswell or newer architecture is recommended.
+Developer kits **require** USB 3.0. RealSense™ cameras do not provide backwards compatibility with USB 2.0. Not all USB host chipsets are compatible with librealsense, although it has been validated with recent generations of the Intel Host Controller chipset. An exhaustive list of incompatible hardware is not presently provided. On x86, a Haswell or newer architecture is recommended.
+
+For small-form factor usages, librealsense has been demonstrated to work on the following boards:
+  * [Intel Compute Stick, BOXSTK1AW32SCR](http://www.amazon.com/Intel-Compute-BOXSTK1AW32SCR-Windows-32-bit/dp/B01ASB0DJ8)
+  * [Kangaroo MD2B](http://www.amazon.com/Kangaroo-MD2B-Mobile-Desktop-Computer/dp/B017J20D8U)
+  * [UP Board](http://www.up-board.org/kickstarter/up-intel-realsense-technology/)
+
+## Integrations
+
+librealsense has been integrated with a number of third-party components and operating systems. While most of these projects are not directly supported by the librealsense team, they are useful resources for users of this library.
+
+  * [Robotic Operating System](https://github.com/intel-ros/realsense) (Intel Supported, R200 Only)
+  * [Yocto / WindRiver Linux](https://github.com/IntelRealSense/meta-intel-librealsense)
+  * [Arch Linux](https://aur.archlinux.org/packages/librealsense/)
 
 ## Documentation
-
-Formal documentation for librealsense is incomplete and may contain the occasional inaccuracy. Please send us feedback via the Github issue tracker about areas that are unclear or which need to be improved. 
 
 A comprehensive suite of sample and tutorial applications are provided in the `/examples` subdirectory. For new users, it is best to review the tutorial series of apps which are designed to progressively introduce API features.
 
