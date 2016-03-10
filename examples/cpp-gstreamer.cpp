@@ -61,6 +61,7 @@ Mat calcPerspective() {
 
 int32_t* background;
 bool filter = false;
+bool reset = false;
 
 GstElement *gpipeline, *appsrc, *conv, *videosink, *perspective;
 
@@ -114,6 +115,8 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
         set_matrix(perspective,im);
       if (*key == 'f')
         filter = !filter;
+      if (*key == 'r')
+        reset = true;
       break;
 
     default:
@@ -195,7 +198,7 @@ int main(int argc, char * argv[]) try
 {
     gstreamer_init(argc,argv);
     background = new int32_t[640*480];
-    int threshold = -10;
+    int threshold = -32; // ~ 1 mm
 
     rs::log_to_console(rs::log_severity::warn);
     //rs::log_to_file(rs::log_severity::debug, "librealsense.log");
@@ -221,9 +224,19 @@ int main(int argc, char * argv[]) try
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
         uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth); //_aligned_to_color);
 
+        // reset the background
+        if (reset) {
+          for (int i = 0; i < 640*480; i++)
+            background[i] = depth_data[i];
+          reset = false;
+        }
+
+        // background subtraction
         if (filter)
         for (int i = 0; i < 640*480; i++) {
+          if (depth_data[i] == 0) continue;
           int diff = (int32_t)(depth_data[i]) - background[i];
+          // the current pixel is part of the background -> set to zero, update BG
           if (diff > threshold) {
             depth_data[i] = 0;
             background[i] = ((background[i] << 4) + diff) >> 4;
