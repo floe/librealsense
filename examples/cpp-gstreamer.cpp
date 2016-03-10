@@ -59,7 +59,7 @@ Mat calcPerspective() {
 
 #include <immintrin.h>
 
-uint16_t* background;
+int32_t* background;
 bool filter = false;
 
 GstElement *gpipeline, *appsrc, *conv, *videosink, *perspective;
@@ -194,7 +194,8 @@ void gstreamer_init(gint argc, gchar *argv[]) {
 int main(int argc, char * argv[]) try
 {
     gstreamer_init(argc,argv);
-    background = new uint16_t[1920*1080];
+    background = new int32_t[640*480];
+    int threshold = -10;
 
     rs::log_to_console(rs::log_severity::warn);
     //rs::log_to_file(rs::log_severity::debug, "librealsense.log");
@@ -218,23 +219,31 @@ int main(int argc, char * argv[]) try
 
         // TODO: should use rectified streams?
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
-        uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
+        uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth); //_aligned_to_color);
+
+        if (filter)
+        for (int i = 0; i < 640*480; i++) {
+          int diff = (int32_t)(depth_data[i]) - background[i];
+          if (diff > threshold) {
+            depth_data[i] = 0;
+            background[i] = ((background[i] << 4) + diff) >> 4;
+          }
+        }
+
+        // now project the _modified_ depth data onto the color stream
+        depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
 
         // calloc is never slower, and often _much_ faster, than malloc+memset
         uint32_t* new_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
 
         // TODO: optimize with SSE/AVX?
 
-        // TODO: perform registration _after_ background subtraction
-
         for (int i = 0; i < 1920*1080; i++) {
-          if ((depth_data[i] == 0) || (background[i] - depth_data[i] < 96)) {
-            new_frame[i] = 0;
-          } else {
+          if (depth_data[i] != 0)
             new_frame[i] = *((uint32_t*)(color_data+3*i));
-          }
-          background[i] = background[i] * 0.95 + depth_data[i] * 0.05;
         }
+
+        // TODO: perspective XF here
 
         prepare_buffer((GstAppSrc*)appsrc,new_frame);
         g_main_context_iteration(g_main_context_default(),FALSE);
