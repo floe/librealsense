@@ -29,6 +29,9 @@ using namespace cv;
 std::vector<Point2f> src;
 std::vector<Point2f> dst;
 
+Mat im = Mat::eye(3,3,CV_32FC1);
+Mat pm = im;
+
 Mat calcPerspective() {
 
   Mat result;
@@ -38,7 +41,7 @@ Mat calcPerspective() {
   dst.push_back(Point2f(1920,1080));
   dst.push_back(Point2f(   0,1080));
 
-  result = getPerspectiveTransform(dst,src);
+  result = getPerspectiveTransform(src,dst);
 
   src.clear();
   dst.clear();
@@ -63,36 +66,7 @@ int32_t* background;
 bool filter = false;
 bool reset = false;
 
-GstElement *gpipeline, *appsrc, *conv, *videosink, *perspective;
-
-/* Initialize a 2D perspective matrix, you can use
- * cvGetPerspectiveTransform() from OpenCV to build it
- * from a quad-to-quad transformation */
-gdouble im[9] = {
-  1.0, 0.0, 0.0,
-  0.0, 1.0, 0.0,
-  0.0, 0.0, 1.0
-};
-
-// TODO: forget about gst-perspective, just use cvWarpPerspective instead
-// http://docs.opencv.org/2.4/modules/imgproc/doc/geometric_transformations.html#warpperspective
-void set_matrix(GstElement *element, gdouble m[9])
-{
-	GValueArray *va;
-	GValue v = G_VALUE_INIT;
-	guint i;
-
-	va = g_value_array_new(1);
-
-	g_value_init(&v, G_TYPE_DOUBLE);
-	for (i = 0; i < 9; i++) {
-		g_value_set_double(&v, m[i]);
-		g_value_array_append(va, &v);
-		g_value_reset(&v);
-	}
-	g_object_set(G_OBJECT(element), "matrix", va, NULL);
-	g_value_array_free(va);
-}
+GstElement *gpipeline, *appsrc, *conv, *videosink;
 
 gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 
@@ -112,7 +86,7 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
     case GST_NAVIGATION_EVENT_KEY_PRESS:
       gst_navigation_event_parse_key_event(event,&key);
       if (key == std::string("space"))
-        set_matrix(perspective,im);
+        pm = im;
       if (*key == 'f')
         filter = !filter;
       if (*key == 'r')
@@ -125,7 +99,7 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 
   if (src.size() == 4) {
     Mat r = calcPerspective();
-    set_matrix(perspective,r.ptr<gdouble>(0));
+    pm = r; //set_matrix(perspective,r.ptr<gdouble>(0));
   }
 
   return true;
@@ -133,7 +107,6 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 
 void buffer_destroy(gpointer data) {
   free(data);
-  //delete[] data;
 }
 
 GstFlowReturn prepare_buffer(GstAppSrc* appsrc, uint32_t* color_data) {
@@ -153,9 +126,6 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   gpipeline = gst_pipeline_new ("pipeline");
   appsrc = gst_element_factory_make ("appsrc", "source");
 
-	perspective = gst_element_factory_make("perspective", "persp");
-	set_matrix(perspective,im);
-
   // attach event listener to appsrc pad
   GstPad* srcpad = gst_element_get_static_pad (appsrc, "src");
   gst_pad_set_event_function( srcpad, (GstPadEventFunction)pad_event );
@@ -173,8 +143,8 @@ void gstreamer_init(gint argc, gchar *argv[]) {
 				     "height", G_TYPE_INT, 1080,
 				     "framerate", GST_TYPE_FRACTION, 0, 1,
 				     NULL), NULL);
-  gst_bin_add_many (GST_BIN (gpipeline), appsrc, perspective, videosink, NULL);
-  gst_element_link_many (appsrc, perspective, videosink, NULL);
+  gst_bin_add_many (GST_BIN (gpipeline), appsrc, videosink, NULL);
+  gst_element_link_many (appsrc, videosink, NULL);
 
   /* setup appsrc */
   g_object_set (G_OBJECT (appsrc),
@@ -222,7 +192,7 @@ int main(int argc, char * argv[]) try
 
         // TODO: should use rectified streams?
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
-        uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth); //_aligned_to_color);
+        uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth);
 
         // reset the background
         if (reset) {
@@ -248,6 +218,7 @@ int main(int argc, char * argv[]) try
 
         // calloc is never slower, and often _much_ faster, than malloc+memset
         uint32_t* new_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
+        uint32_t* persp_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
 
         // TODO: optimize with SSE/AVX?
 
@@ -255,11 +226,14 @@ int main(int argc, char * argv[]) try
           if (depth_data[i] != 0)
             new_frame[i] = *((uint32_t*)(color_data+3*i));
         }
+ 
+        Mat input(1080,1920,CV_8UC4,new_frame);
+        Mat output(1080,1920,CV_8UC4,persp_frame);
+        warpPerspective(input,output,pm,input.size(),INTER_NEAREST);
 
-        // TODO: perspective XF here
-
-        prepare_buffer((GstAppSrc*)appsrc,new_frame);
+        prepare_buffer((GstAppSrc*)appsrc,persp_frame);
         g_main_context_iteration(g_main_context_default(),FALSE);
+        free(new_frame);
     }
 
     /* clean up */
