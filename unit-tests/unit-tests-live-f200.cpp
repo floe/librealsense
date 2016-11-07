@@ -5,6 +5,8 @@
 // This set of tests is valid only for the F200 camera //
 /////////////////////////////////////////////////////////
 
+#if !defined(MAKEFILE) || ( defined(F200_TEST) && defined(LIVE_TEST) )
+
 #define CATCH_CONFIG_MAIN
 #include "catch/catch.hpp"
 
@@ -65,7 +67,9 @@ TEST_CASE( "F200 devices support all required options", "[live] [f200]" )
                 RS_OPTION_F200_ACCURACY,
                 RS_OPTION_F200_MOTION_RANGE,
                 RS_OPTION_F200_FILTER_OPTION,
-                RS_OPTION_F200_CONFIDENCE_THRESHOLD
+                RS_OPTION_F200_CONFIDENCE_THRESHOLD,
+                RS_OPTION_F200_DYNAMIC_FPS,
+                RS_OPTION_FRAMES_QUEUE_SIZE
             };
 
             for(int i=0; i<RS_OPTION_COUNT; ++i)
@@ -181,3 +185,5 @@ TEST_CASE( "a single F200 can stream a variety of reasonable streaming mode comb
         });
     }
 }
+
+#endif /* !defined(MAKEFILE) || ( defined(F200_TEST) && defined(LIVE_TEST) ) */

@@ -22,6 +22,9 @@ int main() try
         std::cout << "Device " << i << " - " << dev->get_name() << ":\n";
         std::cout << " Serial number: " << dev->get_serial() << "\n";
         std::cout << " Firmware version: " << dev->get_firmware_version() << "\n";
+        try { std::cout << " USB Port ID: " << dev->get_usb_port_id() << "\n"; } catch (...) {}
+        if (dev->supports(rs::capabilities::adapter_board)) std::cout << " Adapter Board Firmware version: " << dev->get_info(rs::camera_info::adapter_board_firmware_version) << "\n";
+        if (dev->supports(rs::capabilities::motion_events)) std::cout << " Motion Module Firmware version: " << dev->get_info(rs::camera_info::motion_module_firmware_version) << "\n";
 
         // Show which options are supported by this device
         std::cout << " Supported options:\n";
@@ -30,9 +33,9 @@ int main() try
             rs::option opt = (rs::option)j;
             if(dev->supports_option(opt))
             {
-                double min, max, step;
-                dev->get_option_range(opt, min, max, step);
-                std::cout << "    " << opt << " : " << min << " .. " << max << ", " << step << "\n";
+                double min, max, step, def;
+                dev->get_option_range(opt, min, max, step, def);
+                std::cout << "    " << opt << " : " << min << " .. " << max << ", " << step << ", " << def << "\n";
             }
         }
 

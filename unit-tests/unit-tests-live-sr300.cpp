@@ -5,6 +5,8 @@
 // This set of tests is valid only for the SR300 camera //
 //////////////////////////////////////////////////////////
 
+#if !defined(MAKEFILE) || ( defined(LIVE_TEST) && defined(SR300_TEST) )
+
 #define CATCH_CONFIG_MAIN
 #include "catch/catch.hpp"
 
@@ -50,7 +52,7 @@ TEST_CASE( "SR300 devices support all required options", "[live] [sr300]" )
 
         SECTION( "device supports standard picture options and SR300 extension options, and nothing else" )
         {
-            const int supported_options[] = {
+            std::vector<rs_option> supported_options{
                 RS_OPTION_COLOR_BACKLIGHT_COMPENSATION,
                 RS_OPTION_COLOR_BRIGHTNESS,
                 RS_OPTION_COLOR_CONTRAST,
@@ -67,8 +69,7 @@ TEST_CASE( "SR300 devices support all required options", "[live] [sr300]" )
                 RS_OPTION_F200_ACCURACY,
                 RS_OPTION_F200_MOTION_RANGE,
                 RS_OPTION_F200_FILTER_OPTION,
-                RS_OPTION_F200_CONFIDENCE_THRESHOLD,
-                RS_OPTION_SR300_DYNAMIC_FPS,
+                RS_OPTION_F200_CONFIDENCE_THRESHOLD,                
                 RS_OPTION_SR300_AUTO_RANGE_ENABLE_MOTION_VERSUS_RANGE,
                 RS_OPTION_SR300_AUTO_RANGE_ENABLE_LASER,
                 RS_OPTION_SR300_AUTO_RANGE_MIN_MOTION_VERSUS_RANGE,
@@ -78,7 +79,9 @@ TEST_CASE( "SR300 devices support all required options", "[live] [sr300]" )
                 RS_OPTION_SR300_AUTO_RANGE_MAX_LASER,
                 RS_OPTION_SR300_AUTO_RANGE_START_LASER,
                 RS_OPTION_SR300_AUTO_RANGE_UPPER_THRESHOLD,
-                RS_OPTION_SR300_AUTO_RANGE_LOWER_THRESHOLD
+                RS_OPTION_SR300_AUTO_RANGE_LOWER_THRESHOLD,
+                RS_OPTION_FRAMES_QUEUE_SIZE,
+                RS_OPTION_HARDWARE_LOGGER_ENABLED
             };
 
             for(int i=0; i<RS_OPTION_COUNT; ++i)
@@ -347,7 +350,7 @@ TEST_CASE( "SR300 supports RS_OPTION_F200_LASER_POWER", "[live] [sr300]" )
 
 TEST_CASE( "SR300 supports RS_OPTION_F200_ACCURACY", "[live] [sr300]" )
 {
-    test_sr300_option(RS_OPTION_F200_ACCURACY, {0, 1, 2, 3}, AFTER_START_DEVICE);
+    test_sr300_option(RS_OPTION_F200_ACCURACY, { 1, 2, 3}, AFTER_START_DEVICE);
 }
 
 TEST_CASE( "SR300 supports RS_OPTION_F200_MOTION_RANGE", "[live] [sr300]" )
@@ -362,7 +365,7 @@ TEST_CASE( "SR300 supports RS_OPTION_F200_FILTER_OPTION", "[live] [sr300]" )
 
 TEST_CASE( "SR300 supports RS_OPTION_F200_CONFIDENCE_THRESHOLD", "[live] [sr300]" )
 {
-    test_sr300_option(RS_OPTION_F200_LASER_POWER, {0, 1, 2, 4, 8, 15}, AFTER_START_DEVICE);
+    test_sr300_option(RS_OPTION_F200_CONFIDENCE_THRESHOLD, {0, 1, 2, 4, 8, 15}, AFTER_START_DEVICE);
 }
 
 //////////////////////////////////////////
@@ -411,3 +414,70 @@ TEST_CASE( "a single SR300 can stream a variety of reasonable streaming mode com
         });
     }
 }
+
+inline void test_options(rs_device * device, rs_option* option_list, size_t options, std::vector<double> good_values, std::vector<double> bad_values, std::vector<double> &ret_values, const std::string & expected_success_msg, const std::string & expected_error_msg, bool bWrite)
+{    
+    if (bWrite)
+    {
+        // Test setting good values
+        if (good_values.size() == options)
+        {
+            if (expected_success_msg.size())
+                rs_set_device_options(device, option_list, (unsigned int)options, good_values.data(), require_error(expected_success_msg));
+            else
+                rs_set_device_options(device, option_list, (unsigned int)options, good_values.data(), require_no_error());
+        }
+
+        if (bad_values.size() == options)
+        {
+            if (expected_error_msg.size())
+                rs_set_device_options(device, option_list, (unsigned int)options, bad_values.data(), require_error(expected_error_msg));
+            else
+                rs_set_device_options(device, option_list, (unsigned int)options, bad_values.data(), require_no_error());
+        }
+    }
+    else // Read command
+    {
+        std::vector<double> vretVal;
+        vretVal.resize(options);
+        if (expected_success_msg.size())
+            rs_get_device_options(device, option_list, (unsigned int)options, vretVal.data(), require_error(expected_success_msg));
+        else
+            rs_get_device_options(device, option_list, (unsigned int)options, vretVal.data(), require_no_error());
+
+        // Results to be returned
+        ret_values = vretVal;
+    }
+}
+
+inline void test_sr300_command(rs_device *dev, std::vector<rs_option> options_list,
+    std::vector<double> good_values, std::vector<double> bad_values, std::vector<double>& ret_values, const std::string& expected_success_msg, const std::string& expected_error_msg, int when, bool write_cmd)
+{    
+    REQUIRE(dev != nullptr);
+
+    for (auto opt : options_list)
+    {
+        REQUIRE(rs_device_supports_option(dev, opt, require_no_error()) == 1);
+    }
+
+    if (when & BEFORE_START_DEVICE)
+    {
+        test_options(dev, options_list.data(), options_list.size(), good_values, bad_values, ret_values, expected_success_msg, expected_error_msg, write_cmd);
+    }
+
+    if (when & AFTER_START_DEVICE)
+    {
+        rs_enable_stream_preset(dev, RS_STREAM_DEPTH, RS_PRESET_BEST_QUALITY, require_no_error());
+        rs_start_device(dev, require_no_error());
+
+        // Currently, setting/getting options immediately after streaming frequently raises hardware errors
+        // todo - Internally block or retry failed calls within the first few seconds after streaming
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        test_options(dev, options_list.data(), options_list.size(), good_values, bad_values, ret_values, expected_success_msg, expected_error_msg, write_cmd);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        rs_stop_device(dev, require_no_error());
+    }
+}
+
+#endif /* !defined(MAKEFILE) || ( defined(LIVE_TEST) && defined(SR300_TEST) ) */

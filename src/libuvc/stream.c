@@ -453,7 +453,7 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
     header_info = payload[1];
 
     if (header_info & 0x40) {
-      UVC_DEBUG("bad packet: error bit set");
+      UVC_DEBUG("bad packet: error bit set",);
       return;
     }
 
@@ -816,7 +816,7 @@ uvc_error_t uvc_stream_start(
                                            altsetting->bInterfaceNumber,
                                            altsetting->bAlternateSetting);
     if (ret != UVC_SUCCESS) {
-      UVC_DEBUG("libusb_set_interface_alt_setting failed");
+      UVC_DEBUG("libusb_set_interface_alt_setting failed",);
       goto fail;
     }
 
@@ -874,7 +874,7 @@ uvc_error_t uvc_stream_start(
     ret = libusb_submit_transfer(strmh->transfers[transfer_id]);
     if (ret != UVC_SUCCESS)
     {
-      UVC_DEBUG("libusb_submit_transfer failed");
+      UVC_DEBUG("libusb_submit_transfer failed",);
       break;
     }
   }
@@ -942,6 +942,7 @@ void _uvc_populate_frame(uvc_stream_handle_t *strmh) {
   frame->width = frame_desc->wWidth;
   frame->height = frame_desc->wHeight;
   
+#pragma GCC diagnostic ignored "-Wmultichar"
   switch (frame->fourcc) {
   case '2YUY': /* YUY2 */
     frame->step = frame->width * 2;
@@ -950,6 +951,7 @@ void _uvc_populate_frame(uvc_stream_handle_t *strmh) {
     frame->step = 0;
     break;
   }
+#pragma GCC diagnostic pop
   
   /* copy the image data from the hold buffer to the frame (unnecessary extra buf?) */
   if (frame->data_bytes < strmh->hold_bytes) {
