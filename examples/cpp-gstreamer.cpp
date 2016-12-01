@@ -7,6 +7,7 @@
 #include <iostream>
 #include <iomanip>
 #include <thread>
+#include <Vector.h>
 
 #pragma pack(push, 1)
 struct rgb_pixel
@@ -29,7 +30,9 @@ using namespace cv;
 std::vector<Point2f> src;
 std::vector<Point2f> dst;
 
+// im: identity matrix
 Mat im = Mat::eye(3,3,CV_32FC1);
+// pm: perspective matrix
 Mat pm = im;
 
 Mat calcPerspective() {
@@ -62,10 +65,6 @@ Mat calcPerspective() {
 
 #include <immintrin.h>
 
-int32_t* background;
-bool filter = false;
-bool reset = false;
-
 GstElement *gpipeline, *appsrc, *conv, *videosink;
 
 gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
@@ -87,20 +86,16 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
       gst_navigation_event_parse_key_event(event,&key);
       if (key == std::string("space"))
         pm = im;
-      if (*key == 'f')
-        filter = !filter;
-      if (*key == 'r')
-        reset = true;
       break;
 
     default:
       return false;
   }
 
-  if (src.size() == 4) {
+  /*if (src.size() == 4) {
     Mat r = calcPerspective();
     pm = r; //set_matrix(perspective,r.ptr<gdouble>(0));
-  }
+  }*/
 
   return true;
 }
@@ -167,7 +162,6 @@ void gstreamer_init(gint argc, gchar *argv[]) {
 int main(int argc, char * argv[]) try
 {
     gstreamer_init(argc,argv);
-    background = new int32_t[640*480];
     int threshold = -32; // ~ 1 mm
 
     rs::log_to_console(rs::log_severity::warn);
@@ -185,6 +179,14 @@ int main(int argc, char * argv[]) try
     dev.enable_stream(rs::stream::color, 1920, 1080, rs::format::rgb8, 30);
     dev.start();
 
+    const float scale = rs_get_device_depth_scale((const rs_device*)&dev, NULL);
+    rs::intrinsics color_intrinsics = dev.get_stream_intrinsics(rs::stream::color);
+    rs::intrinsics depth_intrinsics = dev.get_stream_intrinsics(rs::stream::depth);
+
+    // plane parameters
+    float d,l_n;
+    _Vector<float> n;
+
     while (1)
     {
         // Wait for new images
@@ -194,27 +196,46 @@ int main(int argc, char * argv[]) try
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
         uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth);
 
-        // reset the background
-        if (reset) {
-          for (int i = 0; i < 640*480; i++)
-            background[i] = depth_data[i];
-          reset = false;
-        }
-
-        // background subtraction
-        if (filter)
-        for (int i = 0; i < 640*480; i++) {
-          if (depth_data[i] == 0) continue;
-          int diff = (int32_t)(depth_data[i]) - background[i];
-          // the current pixel is part of the background -> set to zero, update BG
-          if (diff > threshold) {
-            depth_data[i] = 0;
-            background[i] = ((background[i] << 4) + diff) >> 4;
-          }
-        }
+        // TODO: set all depth pixels to zero which are within threshold distance of plane
 
         // now project the _modified_ depth data onto the color stream
         depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
+
+        if (src.size() == 3) {
+          _Vector<float> point[3];
+          //rs::float3 point[3];
+          for (int i = 0; i < 3; i++) {
+            float depth = depth_data[1920*(int)round(src[i].y)+(int)round(src[i].x)] * scale;
+            rs::float2 pixel = { src[i].x, src[i].y };
+            *((rs::float3*)(&point[i])) = color_intrinsics.deproject(pixel, depth);
+            //std::cout << point[i] << " ";
+          }
+          //std::cout << std::endl;
+
+          _Vector<float> d1,d2;
+
+          d1 = point[1] - point[0];
+          d2 = point[2] - point[0];
+          n = d1 & d2;
+
+          d = n * point[0];
+          l_n = n.length();
+
+          std::cout << n << " " << l_n << " " << d << std::endl;
+        }
+
+        if (src.size() > 3) {
+          for (int i = 3; i < src.size(); i++) {
+            _Vector<float> point;
+            float depth = depth_data[1920*(int)round(src[i].y)+(int)round(src[i].x)] * scale;
+            rs::float2 pixel = { src[i].x, src[i].y };
+            *((rs::float3*)(&point)) = color_intrinsics.deproject(pixel, depth);
+            std::cout << point << " ";
+            float tmp = (n * point) - d;
+            std::cout << tmp/l_n << " ";
+          }
+          std::cout << std::endl;
+        }
 
         // calloc is never slower, and often _much_ faster, than malloc+memset
         uint32_t* new_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
