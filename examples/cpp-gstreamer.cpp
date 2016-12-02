@@ -188,7 +188,7 @@ int main(int argc, char * argv[]) try
     rs::intrinsics depth_intrinsics = dev.get_stream_intrinsics(rs::stream::depth);
 
     // plane parameters
-    PlaneModel plane;
+    PlaneModel<float> plane;
 
     while (1)
     {
@@ -213,7 +213,7 @@ int main(int argc, char * argv[]) try
         }
 
         std::cout << "3D point count: " << points.size() << std::endl;
-        plane = ransac<PlaneModel>( points, 0.05, 50 );
+        plane = ransac<PlaneModel<float>>( points, 0.05, 50 );
         std::cout << "Ransac computed plane: n=" << plane.n.transpose() << " d=" << plane.d << std::endl;
 
         // set all depth pixels to zero which are within threshold distance of plane
