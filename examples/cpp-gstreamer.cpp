@@ -7,7 +7,6 @@
 #include <iostream>
 #include <iomanip>
 #include <thread>
-#include <Vector.h>
 
 #include <Eigen/Core>
 #include <SimpleRansac.h>
