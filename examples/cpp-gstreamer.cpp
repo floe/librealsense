@@ -9,6 +9,10 @@
 #include <thread>
 #include <Vector.h>
 
+#include <Eigen/Core>
+#include <SimpleRansac.h>
+#include <PlaneModel.h>
+
 #pragma pack(push, 1)
 struct rgb_pixel
 {
@@ -184,8 +188,7 @@ int main(int argc, char * argv[]) try
     rs::intrinsics depth_intrinsics = dev.get_stream_intrinsics(rs::stream::depth);
 
     // plane parameters
-    float d,l_n;
-    _Vector<float> n;
+    PlaneModel plane;
 
     while (1)
     {
@@ -196,46 +199,38 @@ int main(int argc, char * argv[]) try
         uint8_t* color_data = (uint8_t*)dev.get_frame_data(rs::stream::color);
         uint16_t* depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth);
 
-        // TODO: set all depth pixels to zero which are within threshold distance of plane
+        // use RANSAC to compute a plane out of sparse point cloud
+        std::vector<Eigen::Vector3f> points;
+        for (int y = 0; y < depth_intrinsics.height; y+=3) {
+          for (int x = 0; x < depth_intrinsics.width; x+=3) {
+            Eigen::Vector3f point;
+            uint16_t raw_depth = depth_data[depth_intrinsics.width * y + x];
+            if (raw_depth == 0) continue;
+            rs::float2 pixel = { (float) x, (float) y };
+            *((rs::float3*)(&point)) = depth_intrinsics.deproject(pixel, raw_depth*scale);
+            points.push_back( point );
+          }
+        }
+
+        std::cout << "3D point count: " << points.size() << std::endl;
+        plane = ransac<PlaneModel>( points, 0.05, 50 );
+        std::cout << "Ransac computed plane: n=" << plane.n.transpose() << " d=" << plane.d << std::endl;
+
+        // set all depth pixels to zero which are within threshold distance of plane
+        for (int y = 0; y < depth_intrinsics.height; y++) {
+          for (int x = 0; x < depth_intrinsics.width; x++) {
+            Eigen::Vector3f point;
+            uint16_t raw_depth = depth_data[depth_intrinsics.width * y + x];
+            if (raw_depth == 0) continue;
+            rs::float2 pixel = { (float) x, (float) y };
+            *((rs::float3*)(&point)) = depth_intrinsics.deproject(pixel, raw_depth*scale);
+            // FIXME: fixed threshold of 5 cm
+            if (fabs(plane.n.dot(point) - plane.d) < 0.05) depth_data[depth_intrinsics.width * y + x] = 0;
+          }
+        }
 
         // now project the _modified_ depth data onto the color stream
         depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
-
-        if (src.size() == 3) {
-          _Vector<float> point[3];
-          //rs::float3 point[3];
-          for (int i = 0; i < 3; i++) {
-            float depth = depth_data[1920*(int)round(src[i].y)+(int)round(src[i].x)] * scale;
-            rs::float2 pixel = { src[i].x, src[i].y };
-            *((rs::float3*)(&point[i])) = color_intrinsics.deproject(pixel, depth);
-            //std::cout << point[i] << " ";
-          }
-          //std::cout << std::endl;
-
-          _Vector<float> d1,d2;
-
-          d1 = point[1] - point[0];
-          d2 = point[2] - point[0];
-          n = d1 & d2;
-
-          d = n * point[0];
-          l_n = n.length();
-
-          std::cout << n << " " << l_n << " " << d << std::endl;
-        }
-
-        if (src.size() > 3) {
-          for (int i = 3; i < src.size(); i++) {
-            _Vector<float> point;
-            float depth = depth_data[1920*(int)round(src[i].y)+(int)round(src[i].x)] * scale;
-            rs::float2 pixel = { src[i].x, src[i].y };
-            *((rs::float3*)(&point)) = color_intrinsics.deproject(pixel, depth);
-            std::cout << point << " ";
-            float tmp = (n * point) - d;
-            std::cout << tmp/l_n << " ";
-          }
-          std::cout << std::endl;
-        }
 
         // calloc is never slower, and often _much_ faster, than malloc+memset
         uint32_t* new_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
