@@ -68,6 +68,8 @@ Mat calcPerspective() {
 
 #include <immintrin.h>
 
+bool find_plane = false;
+
 GstElement *gpipeline, *appsrc, *conv, *videosink;
 
 gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
@@ -89,6 +91,10 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
       gst_navigation_event_parse_key_event(event,&key);
       if (key == std::string("space"))
         pm = im;
+      if (key == std::string("p"))
+        find_plane = true;
+      if (key == std::string("q"))
+        exit(1);
       break;
 
     default:
@@ -162,6 +168,77 @@ void gstreamer_init(gint argc, gchar *argv[]) {
 // realsense stuff
 //
 
+// plane parameters
+PlaneModel<float> plane;
+float scale = 32;
+rs::intrinsics color_intrinsics;
+rs::intrinsics depth_intrinsics;
+rs::extrinsics depth_to_color;
+
+void deproject_all(uint16_t* depth_data) {
+  int w = depth_intrinsics.width;
+  int h = depth_intrinsics.height;
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      Eigen::Vector3f point;
+      uint16_t raw_depth = depth_data[w * y + x];
+      if (raw_depth == 0) continue;
+      rs::float2 pixel = { (float) x, (float) y };
+      *((rs::float3*)(&point)) = depth_intrinsics.deproject(pixel, raw_depth*scale);
+      // FIXME: fixed threshold of 5 cm
+      if (fabs(plane.n.dot(point) - plane.d) < 0.05) depth_data[w * y + x] = 0;
+    }
+  }
+}
+
+/*
+template<class GET_DEPTH, class TRANSFER_PIXEL> void align_images(const rs_intrinsics & depth_intrin, const rs_extrinsics & depth_to_other, const rs_intrinsics & other_intrin, GET_DEPTH get_depth, TRANSFER_PIXEL transfer_pixel)
+    {
+        // check if the target image is significantly larger than the source image
+        int filter_half_x = std::round(0.5 * (float)other_intrin.width  / (float)depth_intrin.width );
+        int filter_half_y = std::round(0.5 * (float)other_intrin.height / (float)depth_intrin.height);
+
+        if (other_intrin.width  == depth_intrin.width ) filter_half_x = 0;
+        if (other_intrin.height == depth_intrin.height) filter_half_y = 0;
+
+        // Iterate over the pixels of the depth image    
+#pragma omp parallel for schedule(dynamic)
+        for(int depth_y = 0; depth_y < depth_intrin.height; ++depth_y)
+        {
+            int depth_pixel_index = depth_y * depth_intrin.width;
+            for(int depth_x = 0; depth_x < depth_intrin.width; ++depth_x, ++depth_pixel_index)
+            {
+                // Skip over depth pixels with the value of zero, we have no depth data so we will not write anything into our aligned images
+                if(float depth = get_depth(depth_pixel_index))
+                {
+                    // Map the top-left corner of the depth pixel onto the other image
+                    float depth_pixel[2] = {(float)depth_x, (float)depth_y}, depth_point[3], other_point[3], other_pixel[2];
+                    rs_deproject_pixel_to_point(depth_point, &depth_intrin, depth_pixel, depth);
+                    rs_transform_point_to_point(other_point, &depth_to_other, depth_point);
+                    rs_project_point_to_pixel(other_pixel, &other_intrin, other_point);
+                    const int other_x0 = static_cast<int>(other_pixel[0] + 0.5f);
+                    const int other_y0 = static_cast<int>(other_pixel[1] + 0.5f);
+
+                    if(other_x0 < filter_half_x || other_y0 < filter_half_y || other_x0 >= other_intrin.width-filter_half_x || other_y0 >= other_intrin.height-filter_half_y) continue;
+
+                    // Transfer between the depth pixels and the pixels inside the rectangle on the other image
+                    int index = (other_y0-filter_half_y) * other_intrin.width + other_x0-filter_half_x;
+
+                    // creates rectangular patch of size filter_width_{x,y}*2+1 around other0_{x,y}
+                    for (int ty = -filter_half_y; ty <= filter_half_y; ty++) {
+                        for (int tx = -filter_half_x; tx <= filter_half_x; tx++) {
+                            transfer_pixel(depth_pixel_index, index);
+                            index += 1;
+                        }
+                        index += other_intrin.width - (2*filter_half_x+1);
+                   }
+                }
+            }
+        }    
+    }
+
+*/
+
 int main(int argc, char * argv[]) try
 {
     gstreamer_init(argc,argv);
@@ -182,12 +259,10 @@ int main(int argc, char * argv[]) try
     dev.enable_stream(rs::stream::color, 1920, 1080, rs::format::rgb8, 30);
     dev.start();
 
-    const float scale = rs_get_device_depth_scale((const rs_device*)&dev, NULL);
-    rs::intrinsics color_intrinsics = dev.get_stream_intrinsics(rs::stream::color);
-    rs::intrinsics depth_intrinsics = dev.get_stream_intrinsics(rs::stream::depth);
-
-    // plane parameters
-    PlaneModel<float> plane;
+    scale = rs_get_device_depth_scale((const rs_device*)&dev, NULL);
+    color_intrinsics = dev.get_stream_intrinsics(rs::stream::color);
+    depth_intrinsics = dev.get_stream_intrinsics(rs::stream::depth);
+    depth_to_color = dev.get_extrinsics(rs::stream::depth,rs::stream::color);
 
     while (1)
     {
@@ -200,6 +275,7 @@ int main(int argc, char * argv[]) try
 
         // use RANSAC to compute a plane out of sparse point cloud
         std::vector<Eigen::Vector3f> points;
+        if (find_plane) {
         for (int y = 0; y < depth_intrinsics.height; y+=3) {
           for (int x = 0; x < depth_intrinsics.width; x+=3) {
             Eigen::Vector3f point;
@@ -214,19 +290,11 @@ int main(int argc, char * argv[]) try
         std::cout << "3D point count: " << points.size() << std::endl;
         plane = ransac<PlaneModel<float>>( points, 0.05, 50 );
         std::cout << "Ransac computed plane: n=" << plane.n.transpose() << " d=" << plane.d << std::endl;
+        find_plane = false;
+        }
 
         // set all depth pixels to zero which are within threshold distance of plane
-        for (int y = 0; y < depth_intrinsics.height; y++) {
-          for (int x = 0; x < depth_intrinsics.width; x++) {
-            Eigen::Vector3f point;
-            uint16_t raw_depth = depth_data[depth_intrinsics.width * y + x];
-            if (raw_depth == 0) continue;
-            rs::float2 pixel = { (float) x, (float) y };
-            *((rs::float3*)(&point)) = depth_intrinsics.deproject(pixel, raw_depth*scale);
-            // FIXME: fixed threshold of 5 cm
-            if (fabs(plane.n.dot(point) - plane.d) < 0.05) depth_data[depth_intrinsics.width * y + x] = 0;
-          }
-        }
+        deproject_all( depth_data );
 
         // now project the _modified_ depth data onto the color stream
         depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
