@@ -34,7 +34,7 @@ std::vector<Point2f> src;
 std::vector<Point2f> dst;
 
 // im: identity matrix
-Mat im = Mat::eye(3,3,CV_32FC1);
+Mat im = (Mat_<float>(3,3) << 1280.0/1920.0, 0, 0, 0, 720.0/1080.0, 0, 0, 0, 1 );
 // pm: perspective matrix
 Mat pm = im;
 
@@ -42,10 +42,10 @@ Mat calcPerspective() {
 
   Mat result;
 
-  dst.push_back(Point2f(   0,   0));
-  dst.push_back(Point2f(1920,   0));
-  dst.push_back(Point2f(1920,1080));
-  dst.push_back(Point2f(   0,1080));
+  dst.push_back(Point2f(   0,  0));
+  dst.push_back(Point2f(1280,  0));
+  dst.push_back(Point2f(1280,720));
+  dst.push_back(Point2f(   0,720));
 
   result = getPerspectiveTransform(src,dst);
 
@@ -68,7 +68,8 @@ Mat calcPerspective() {
 
 #include <immintrin.h>
 
-bool find_plane = false;
+bool find_plane = true;
+bool filter = true;
 
 GstElement *gpipeline, *appsrc, *conv, *videosink;
 
@@ -84,7 +85,7 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
 
     case GST_NAVIGATION_EVENT_MOUSE_BUTTON_RELEASE:
       gst_navigation_event_parse_mouse_button_event(event,&b,&x,&y);
-      src.push_back(Point2f(x,y));
+      src.push_back(Point2f(1920.0*x/1280.0,1080.0*y/720.0));
       break;
 
     case GST_NAVIGATION_EVENT_KEY_PRESS:
@@ -93,6 +94,8 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
         pm = im;
       if (key == std::string("p"))
         find_plane = true;
+      if (key == std::string("f"))
+        filter = !filter;
       if (key == std::string("q"))
         exit(1);
       break;
@@ -101,10 +104,10 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
       return false;
   }
 
-  /*if (src.size() == 4) {
+  if (src.size() == 4) {
     Mat r = calcPerspective();
     pm = r; //set_matrix(perspective,r.ptr<gdouble>(0));
-  }*/
+  }
 
   return true;
 }
@@ -115,7 +118,7 @@ void buffer_destroy(gpointer data) {
 
 GstFlowReturn prepare_buffer(GstAppSrc* appsrc, uint32_t* color_data) {
 
-  guint size = 1920 * 1080 * 4;
+  guint size = 1280 * 720 * 4;
   GstBuffer *buffer = gst_buffer_new_wrapped_full( (GstMemoryFlags)0, (gpointer)(color_data), size, 0, size, color_data, buffer_destroy );
 
   return gst_app_src_push_buffer(appsrc, buffer);
@@ -143,8 +146,8 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   g_object_set (G_OBJECT (appsrc), "caps",
     gst_caps_new_simple ("video/x-raw",
 				     "format", G_TYPE_STRING, "RGBA",
-				     "width", G_TYPE_INT, 1920,
-				     "height", G_TYPE_INT, 1080,
+				     "width", G_TYPE_INT, 1280,
+				     "height", G_TYPE_INT, 720,
 				     "framerate", GST_TYPE_FRACTION, 0, 1,
 				     NULL), NULL);
   gst_bin_add_many (GST_BIN (gpipeline), appsrc, videosink, NULL);
@@ -200,7 +203,7 @@ uint32_t* deproject_all(uint16_t* depth_data, uint8_t* color_data) {
       point = depth_intrinsics.deproject(pixel, raw_depth*scale);
       
       // FIXME: fixed threshold of 5 cm
-      if (fabs(plane.n.dot(*((Eigen::Vector3f*)(&point))) - plane.d) < 0.05) continue; // depth_data[w * y + x] = 0;
+      if (filter) if (fabs(plane.n.dot(*((Eigen::Vector3f*)(&point))) - plane.d) < 0.05) continue; // depth_data[w * y + x] = 0;
       
       rs::float3 point2 = depth_to_color.transform(point);
       rs::float2 pixel2 = color_intrinsics.project(point2);
@@ -244,7 +247,7 @@ int main(int argc, char * argv[]) try
     printf("    Serial number: %s\n", dev.get_serial());
     printf("    Firmware version: %s\n\n", dev.get_firmware_version());
 
-    dev.enable_stream(rs::stream::depth, rs::preset::best_quality); // 640,  480, rs::format::z16,  30);
+    dev.enable_stream(rs::stream::depth,  640,  480, rs::format::z16,  30);
     dev.enable_stream(rs::stream::color, 1920, 1080, rs::format::rgb8, 30);
     dev.start();
 
@@ -283,11 +286,11 @@ int main(int argc, char * argv[]) try
         }
 
         uint32_t* new_frame = deproject_all( depth_data, color_data );
-        uint32_t* persp_frame = (uint32_t*)malloc( sizeof(uint32_t) * 1920*1080 );
+        uint32_t* persp_frame = (uint32_t*)malloc( sizeof(uint32_t) * 1280*720 );
 
         Mat input(1080,1920,CV_8UC4,new_frame);
-        Mat output(1080,1920,CV_8UC4,persp_frame);
-        warpPerspective(input,output,pm,input.size(),INTER_NEAREST);
+        Mat output(720,1280,CV_8UC4,persp_frame);
+        warpPerspective(input,output,pm,output.size(),INTER_NEAREST);
 
         prepare_buffer((GstAppSrc*)appsrc,persp_frame);
         g_main_context_iteration(g_main_context_default(),FALSE);
