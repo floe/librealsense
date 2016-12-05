@@ -70,6 +70,9 @@ Mat calcPerspective() {
 
 bool find_plane = true;
 bool filter = true;
+bool quit = false;
+
+int distance = 5;
 
 GstElement *gpipeline, *appsrc, *conv, *videosink;
 
@@ -97,7 +100,9 @@ gboolean pad_event(GstPad *pad, GstObject *parent, GstEvent *event) {
       if (key == std::string("f"))
         filter = !filter;
       if (key == std::string("q"))
-        exit(1);
+        quit = true;
+      if (key == std::string( "plus")) distance++;
+      if (key == std::string("minus")) distance--;
       break;
 
     default:
@@ -141,7 +146,6 @@ void gstreamer_init(gint argc, gchar *argv[]) {
   const char* pipe_desc = (argc > 1) ? argv[1] : "videoconvert ! fpsdisplaysink sync=false";
   videosink = gst_parse_bin_from_description(pipe_desc,TRUE,NULL);
 
-  // TODO: output only 1280x720 post-perspective
   /* setup */
   g_object_set (G_OBJECT (appsrc), "caps",
     gst_caps_new_simple ("video/x-raw",
@@ -203,7 +207,7 @@ uint32_t* deproject_all(uint16_t* depth_data, uint8_t* color_data) {
       point = depth_intrinsics.deproject(pixel, raw_depth*scale);
       
       // FIXME: fixed threshold of 5 cm
-      if (filter) if (fabs(plane.n.dot(*((Eigen::Vector3f*)(&point))) - plane.d) < 0.05) continue; // depth_data[w * y + x] = 0;
+      if (filter) if (fabs(plane.n.dot(*((Eigen::Vector3f*)(&point))) - plane.d) < distance*0.01) continue; // depth_data[w * y + x] = 0;
       
       rs::float3 point2 = depth_to_color.transform(point);
       rs::float2 pixel2 = color_intrinsics.project(point2);
@@ -234,7 +238,6 @@ uint32_t* deproject_all(uint16_t* depth_data, uint8_t* color_data) {
 int main(int argc, char * argv[]) try
 {
     gstreamer_init(argc,argv);
-    int threshold = -32; // ~ 1 mm
 
     rs::log_to_console(rs::log_severity::warn);
     //rs::log_to_file(rs::log_severity::debug, "librealsense.log");
@@ -256,7 +259,7 @@ int main(int argc, char * argv[]) try
     depth_intrinsics = dev.get_stream_intrinsics(rs::stream::depth);
     depth_to_color = dev.get_extrinsics(rs::stream::depth,rs::stream::color);
 
-    while (1)
+    while (!quit)
     {
         // Wait for new images
         dev.wait_for_frames();
@@ -268,8 +271,8 @@ int main(int argc, char * argv[]) try
         // use RANSAC to compute a plane out of sparse point cloud
         std::vector<Eigen::Vector3f> points;
         if (find_plane) {
-        for (int y = 0; y < depth_intrinsics.height; y+=3) {
-          for (int x = 0; x < depth_intrinsics.width; x+=3) {
+        for (int y = 0; y < depth_intrinsics.height; y++) {
+          for (int x = 0; x < depth_intrinsics.width; x++) {
             Eigen::Vector3f point;
             uint16_t raw_depth = depth_data[depth_intrinsics.width * y + x];
             if (raw_depth == 0) continue;
@@ -280,7 +283,7 @@ int main(int argc, char * argv[]) try
         }
 
         std::cout << "3D point count: " << points.size() << std::endl;
-        plane = ransac<PlaneModel<float>>( points, 0.05, 50 );
+        plane = ransac<PlaneModel<float>>( points, distance*0.01, 100 );
         std::cout << "Ransac computed plane: n=" << plane.n.transpose() << " d=" << plane.d << std::endl;
         find_plane = false;
         }
@@ -300,6 +303,8 @@ int main(int argc, char * argv[]) try
     /* clean up */
     gst_element_set_state (gpipeline, GST_STATE_NULL);
     gst_object_unref (GST_OBJECT (gpipeline));
+
+    dev.stop();
 
     return EXIT_SUCCESS;
 }
