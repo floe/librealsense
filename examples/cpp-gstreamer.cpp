@@ -177,20 +177,23 @@ rs::extrinsics depth_to_color;
 
 uint32_t* deproject_all(uint16_t* depth_data, uint8_t* color_data) {
   
-  const int w = depth_intrinsics.width;
-  const int h = depth_intrinsics.height;
-  
+  const int dw = depth_intrinsics.width;
+  const int dh = depth_intrinsics.height;
+
+  const int cw = color_intrinsics.width;
+  const int ch = color_intrinsics.height;
+
   const int filter_half_x = 2;
   const int filter_half_y = 1;
 
   // calloc is never slower, and often _much_ faster, than malloc+memset
   uint32_t* new_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
 
-  for (int y = 0; y < h; y++) {
-    int dpi = y * w;
-    for (int x = 0; x < w; x++, dpi++) {
+  for (int y = 0; y < dh; y++) {
+    for (int x = 0; x < dw; x++) {
+
       rs::float3 point;
-      uint16_t raw_depth = depth_data[dpi];
+      uint16_t raw_depth = depth_data[y * dw + x];
       if (raw_depth == 0) continue;
 
       rs::float2 pixel = { (float) x, (float) y };
@@ -205,10 +208,10 @@ uint32_t* deproject_all(uint16_t* depth_data, uint8_t* color_data) {
       const int other_x0 = static_cast<int>(pixel2.x + 0.5f);
       const int other_y0 = static_cast<int>(pixel2.y + 0.5f);
 
-      if (other_x0 < filter_half_x || other_y0 < filter_half_y || other_x0 >= color_intrinsics.width-filter_half_x || other_y0 >= color_intrinsics.height-filter_half_y) continue;
+      if (other_x0 < filter_half_x || other_y0 < filter_half_y || other_x0 >= cw-filter_half_x || other_y0 >= ch-filter_half_y) continue;
 
       // Transfer between the depth pixels and the pixels inside the rectangle on the other image
-      int index = (other_y0-filter_half_y) * color_intrinsics.width + other_x0-filter_half_x;
+      int index = (other_y0-filter_half_y) * cw + other_x0-filter_half_x;
 
       // creates rectangular patch of size filter_width_{x,y}*2+1 around other0_{x,y}
       for (int ty = -filter_half_y; ty <= filter_half_y; ty++) {
@@ -216,7 +219,7 @@ uint32_t* deproject_all(uint16_t* depth_data, uint8_t* color_data) {
           new_frame[index] = *((uint32_t*)(color_data+3*index));
           index += 1;
         }
-        index += color_intrinsics.width - (2*filter_half_x+1);
+        index += cw - (2*filter_half_x+1);
       }
     }
   }
