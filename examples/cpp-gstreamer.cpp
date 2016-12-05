@@ -183,6 +183,7 @@ uint32_t* deproject_all(uint16_t* depth_data, uint8_t* color_data) {
   const int filter_half_x = 2;
   const int filter_half_y = 1;
 
+  // calloc is never slower, and often _much_ faster, than malloc+memset
   uint32_t* new_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
 
   for (int y = 0; y < h; y++) {
@@ -223,15 +224,6 @@ uint32_t* deproject_all(uint16_t* depth_data, uint8_t* color_data) {
   return new_frame;
 }
 
-/*
-                    // Map the top-left corner of the depth pixel onto the other image
-                    float depth_pixel[2] = {(float)depth_x, (float)depth_y}, depth_point[3], other_point[3], other_pixel[2];
-                    rs_deproject_pixel_to_point(depth_point, &depth_intrin, depth_pixel, depth);
-                    rs_transform_point_to_point(other_point, &depth_to_other, depth_point);
-                    rs_project_point_to_pixel(other_pixel, &other_intrin, other_point);
-                    const int other_x0 = static_cast<int>(other_pixel[0] + 0.5f);
-                    const int other_y0 = static_cast<int>(other_pixel[1] + 0.5f);
-*/
 
 int main(int argc, char * argv[]) try
 {
@@ -287,23 +279,9 @@ int main(int argc, char * argv[]) try
         find_plane = false;
         }
 
-        // set all depth pixels to zero which are within threshold distance of plane
         uint32_t* new_frame = deproject_all( depth_data, color_data );
+        uint32_t* persp_frame = (uint32_t*)malloc( sizeof(uint32_t) * 1920*1080 );
 
-        // now project the _modified_ depth data onto the color stream
-        //depth_data = (uint16_t*)dev.get_frame_data(rs::stream::depth_aligned_to_color);
-
-        // calloc is never slower, and often _much_ faster, than malloc+memset
-        //uint32_t* new_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
-        uint32_t* persp_frame = (uint32_t*)calloc( sizeof(uint32_t), 1920*1080 );
-
-        // TODO: optimize with SSE/AVX?
-
-        /*for (int i = 0; i < 1920*1080; i++) {
-          if (depth_data[i] != 0)
-            new_frame[i] = *((uint32_t*)(color_data+3*i));
-        }*/
- 
         Mat input(1080,1920,CV_8UC4,new_frame);
         Mat output(1080,1920,CV_8UC4,persp_frame);
         warpPerspective(input,output,pm,input.size(),INTER_NEAREST);
