@@ -22,7 +22,14 @@ else()
 endif()
 
 find_package(OpenGL REQUIRED)
-set(DEPENDENCIES realsense ${OPENGL_LIBRARIES})
+
+find_package(PkgConfig)
+pkg_check_modules(GST REQUIRED gstreamer-1.0>=1.4
+                               gstreamer-video-1.0>=1.4
+                               gstreamer-app-1.0>=1.4)
+pkg_check_modules(OCV REQUIRED opencv)
+
+set(DEPENDENCIES realsense ${OPENGL_LIBRARIES} ${GST_LIBRARIES} ${OCV_LIBRARIES})
 
 if(WIN32)
     add_subdirectory(third_party/glfw)
@@ -50,6 +57,8 @@ else()
     )
     list(APPEND DEPENDENCIES m ${GLFW_LIBRARIES} ${LIBUSB1_LIBRARIES})
     include_directories(${GLFW_INCLUDE_DIR})
+    include_directories(${GST_INCLUDE_DIRS})
+    include_directories("/usr/include/eigen3/")
 endif()
 
 # C Tutorials
@@ -73,6 +82,9 @@ add_executable(cpp-tutorial-3-pointcloud cpp-tutorial-3-pointcloud.cpp)
 target_link_libraries(cpp-tutorial-3-pointcloud ${DEPENDENCIES})
 
 # Examples
+add_executable(cpp-gstreamer cpp-gstreamer.cpp)
+target_link_libraries(cpp-gstreamer ${DEPENDENCIES})
+
 add_executable(cpp-alignimages cpp-alignimages.cpp)
 target_link_libraries(cpp-alignimages ${DEPENDENCIES})
 
@@ -119,6 +131,7 @@ install(
     cpp-tutorial-2-streams
     cpp-tutorial-3-pointcloud
 
+    cpp-gstreamer
     cpp-alignimages
     cpp-callback
     cpp-callback-2
