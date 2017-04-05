@@ -2,7 +2,7 @@
 
 [ ![License] [license-image] ] [license]
 
-[release-image]: http://img.shields.io/badge/release-1.9.7-blue.svg?style=flat
+[release-image]: http://img.shields.io/badge/release-1.12.0-blue.svg?style=flat
 [releases]: https://github.com/IntelRealSense/librealsense/releases
 
 [license-image]: http://img.shields.io/badge/license-Apache--2-blue.svg?style=flat
@@ -47,6 +47,7 @@ A comprehensive suite of sample and tutorial applications are provided in the `/
   * [Camera Spec Sheet](./doc/camera_specs.md) - A brief overview of R200, F200 and SR300
   * [Developer Notes](./doc/dev_log.md) - Several informal notes gathered during internal releases
   * [Stream Formats](./doc/supported_video_formats.pdf) - A list of available stream resolutions and pixel formats provided by the supported devices.
+  * [Branching and Releases](./doc/branching.md) - Overview of live branches and major releases
 
 ## Functionality
 
@@ -59,21 +60,18 @@ A comprehensive suite of sample and tutorial applications are provided in the `/
 
 ## Compatible Devices
 
-1. RealSense R200 (Firmware 1.0.72.06 and up)
-2. RealSense F200 (Firmware 2.60.0.0 and up)
-3. RealSense SR300 (Firmware 3.10.10.0 and up)
-4. RealSense LR200 (Firmware 2.0.71.18 and up)
+1. RealSense R200
+2. RealSense F200
+3. RealSense SR300
+4. RealSense LR200
 5. [RealSense ZR300](https://newsroom.intel.com/chip-shots/intel-announces-tools-realsense-technology-development/)
-  * Camera Firmware 2.0.71.18 and up
-  * USB Adapter Board Firmware 1.27.0.0 and up
-  * Motion Module Firmware 1.23.0.0 and up
 
 ## Compatible Platforms
 
 The library is written in standards-conforming C++11 and relies only on the C89 ABI for its public interface. It is developed and tested on the following platforms:
 
 1. Ubuntu 14.04 and 16.04 LTS (GCC 4.9 toolchain)
-2. Windows 10 (Visual Studio 2015 Update 2)
+2. Windows 8.1 and Windows 10 (Visual Studio 2015 Update 2)
 3. Mac OS X 10.7+ (Clang toolchain)
 4. [Ostro](https://ostroproject.org/)
 
@@ -93,7 +91,7 @@ For small-form factor usages, this library has been demonstrated to work on the 
 
 The library has been integrated with a number of third-party components and operating systems. While most of these projects are not directly supported by the team, they are useful resources for users of this library.
 
-  * [Robotic Operating System](https://github.com/intel-ros/realsense)
+  * [Robotic Operating System](https://github.com/intel-ros/realsense) (Intel Supported; R200, F200, SR300 all supported)
   * [Yocto / WindRiver Linux](https://github.com/IntelRealSense/meta-intel-librealsense)
   * [Arch Linux](https://aur.archlinux.org/packages/librealsense/)
 

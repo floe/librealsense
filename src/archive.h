@@ -17,7 +17,9 @@ namespace rsimpl
     public:
         struct frame_additional_data
         {
+            double actual_fps = 0;
             double timestamp = 0;
+            double exposure_value = 0;
             unsigned long long frame_number = 0;
             long long system_time = 0;
             int width = 0;
@@ -30,6 +32,7 @@ namespace rsimpl
             rs_stream stream_type = RS_STREAM_COUNT;
             rs_timestamp_domain timestamp_domain = RS_TIMESTAMP_DOMAIN_CAMERA;
             int pad = 0;
+            std::shared_ptr<std::vector<rs_frame_metadata>> supported_metadata_vector;
             std::chrono::high_resolution_clock::time_point frame_callback_started {};
 
             frame_additional_data(){};
@@ -37,7 +40,7 @@ namespace rsimpl
             frame_additional_data(double in_timestamp, unsigned long long in_frame_number, long long in_system_time, 
                 int in_width, int in_height, int in_fps, 
                 int in_stride_x, int in_stride_y, int in_bpp, 
-                const rs_format in_format, rs_stream in_stream_type, int in_pad)
+                const rs_format in_format, rs_stream in_stream_type, int in_pad, std::shared_ptr<std::vector<rs_frame_metadata>> in_supported_metadata_vector, double in_exposure_value, double in_actual_fps)
                 : timestamp(in_timestamp),
                   frame_number(in_frame_number),
                   system_time(in_system_time),
@@ -49,7 +52,10 @@ namespace rsimpl
                   bpp(in_bpp),
                   format(in_format),
                   stream_type(in_stream_type),
-                  pad(in_pad) {}
+                  pad(in_pad),
+                  supported_metadata_vector(in_supported_metadata_vector),
+                  exposure_value(in_exposure_value),
+                  actual_fps(in_actual_fps){}
         };
 
         // Define a movable but explicitly noncopyable buffer type to hold our frame data
@@ -87,6 +93,8 @@ namespace rsimpl
 
             ~frame() { on_release.reset(); }
 
+            double get_frame_metadata(rs_frame_metadata frame_metadata) const override;
+            bool supports_frame_metadata(rs_frame_metadata frame_metadata) const override;
             const byte* get_frame_data() const;
             double get_frame_timestamp() const;
             rs_timestamp_domain get_frame_timestamp_domain() const;
@@ -155,6 +163,8 @@ namespace rsimpl
                 if (frame_ptr) frame_ptr->disable_continuation();
             }
 
+            double get_frame_metadata(rs_frame_metadata frame_metadata) const override;
+            bool supports_frame_metadata(rs_frame_metadata frame_metadata) const override;
             const byte* get_frame_data() const override;
             double get_frame_timestamp() const override;
             unsigned long long get_frame_number() const override;
@@ -185,6 +195,8 @@ namespace rsimpl
                 return &buffer[stream];
             }
 
+            double get_frame_metadata(rs_stream stream, rs_frame_metadata frame_metadata) const { return buffer[stream].get_frame_metadata(frame_metadata); }
+            bool supports_frame_metadata(rs_stream stream, rs_frame_metadata frame_metadata) const { return buffer[stream].supports_frame_metadata(frame_metadata); }
             const byte * get_frame_data(rs_stream stream) const { return buffer[stream].get_frame_data(); }
             double get_frame_timestamp(rs_stream stream) const { return buffer[stream].get_frame_timestamp(); }
             unsigned long long get_frame_number(rs_stream stream) const { return buffer[stream].get_frame_number(); }
@@ -208,7 +220,7 @@ namespace rsimpl
         
 
     protected:
-        frame backbuffer[RS_STREAM_NATIVE_COUNT]; // recieve frame here
+        frame backbuffer[RS_STREAM_NATIVE_COUNT]; // receive frame here
         std::vector<frame> freelist; // return frames here
         std::recursive_mutex mutex;
         std::chrono::high_resolution_clock::time_point capture_started;

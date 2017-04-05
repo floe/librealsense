@@ -110,21 +110,34 @@ public:
             glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, data);
             break;
         case rs::format::raw10:
-            // Visualize Raw10 by performing a naive downsample. Each 2x2 block contains one red pixel, two green pixels, and one blue pixel, so combine them into a single RGB triple.
-            rgb.clear(); rgb.resize(width/2 * height/2 * 3);
-            auto out = rgb.data(); auto in0 = reinterpret_cast<const uint8_t *>(data), in1 = in0 + width*5/4;
-            for(int y=0; y<height; y+=2)
             {
-                for(int x=0; x<width; x+=4)
+                // Visualize Raw10 by performing a naive downsample. Each 2x2 block contains one red pixel, two green pixels, and one blue pixel, so combine them into a single RGB triple.
+                rgb.clear(); rgb.resize(width/2 * height/2 * 3);
+                auto out = rgb.data(); auto in0 = reinterpret_cast<const uint8_t *>(data), in1 = in0 + width*5/4;
+                for(int y=0; y<height; y+=2)
                 {
-                    *out++ = in0[0]; *out++ = (in0[1] + in1[0]) / 2; *out++ = in1[1]; // RGRG -> RGB RGB
-                    *out++ = in0[2]; *out++ = (in0[3] + in1[2]) / 2; *out++ = in1[3]; // GBGB 
-                    in0 += 5; in1 += 5;
+                    for(int x=0; x<width; x+=4)
+                    {
+                        *out++ = in0[0]; *out++ = (in0[1] + in1[0]) / 2; *out++ = in1[1]; // RGRG -> RGB RGB
+                        *out++ = in0[2]; *out++ = (in0[3] + in1[2]) / 2; *out++ = in1[3]; // GBGB
+                        in0 += 5; in1 += 5;
+                    }
+                    in0 = in1; in1 += width*5/4;
                 }
-                in0 = in1; in1 += width*5/4;
+                glPixelStorei(GL_UNPACK_ROW_LENGTH, width / 2);        // Update row stride to reflect post-downsampling dimensions of the target texture
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width/2, height/2, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
             }
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width/2, height/2, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
             break;
+        case rs::format::raw16:
+            // All RAW formats will be treated and displayed as Greyscale images
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_SHORT, data);
+            break;
+        default:
+            {
+                std::stringstream ss;
+                ss << rs_format_to_string((rs_format)format) << " pixel format is not supported by the demo";
+                throw std::runtime_error(ss.str().c_str());
+            }
         }
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -132,12 +145,12 @@ public:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
         glBindTexture(GL_TEXTURE_2D, 0);
-        
     }
 
     void upload(rs::device & dev, rs::stream stream)
     {
-        assert(dev.is_stream_enabled(stream));
+        if (stream <= rs::stream::fisheye)
+            assert(dev.is_stream_enabled(stream));
 
         const double timestamp = dev.get_frame_timestamp(stream);
         if(timestamp != last_timestamp)
@@ -160,7 +173,7 @@ public:
         const double timestamp = frame.get_timestamp();
         if(timestamp != last_timestamp)
         {
-            upload(frame.get_data(), frame.get_width(), frame.get_height(), frame.get_format(), frame.get_stride());
+            upload(frame.get_data(), frame.get_width(), frame.get_height(), frame.get_format(), (frame.get_stride() * 8) / frame.get_bpp());
             last_timestamp = timestamp;
 
             ++num_frames;
@@ -182,8 +195,8 @@ public:
         glTexCoord2f(1, 0); glVertex2f(rx+rw, ry   );
         glTexCoord2f(1, 1); glVertex2f(rx+rw, ry+rh);
         glTexCoord2f(0, 1); glVertex2f(rx,    ry+rh);
-        glEnd();    
-        glDisable(GL_TEXTURE_2D);    
+        glEnd();
+        glDisable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
@@ -199,7 +212,7 @@ public:
 
     void show(rs::device & dev, rs::stream stream, int rx, int ry, int rw, int rh)
     {
-        if(!dev.is_stream_enabled(stream)) return;
+        if((stream <= rs::stream::fisheye) && (!dev.is_stream_enabled(stream))) return;
 
         upload(dev, stream);
         
@@ -223,14 +236,12 @@ public:
     void show(rs::stream stream, rs::format format, int stream_framerate, unsigned long long frame_number, double timestamp, int rx, int ry, int rw, int rh, int width, int height)
     {
         show(rx, ry, rw, rh, width, height);
-        if (frame_number != 0)
-        {
-            std::ostringstream ss; ss << stream << ": " << width << " x " << height << " " << format << " (" << fps << "/" << stream_framerate << ")" << ", F#: " << frame_number << ", TS: " << timestamp;
-            glColor3f(0,0,0);
-            draw_text(rx+9, ry+17, ss.str().c_str());
-            glColor3f(1,1,1);
-            draw_text(rx+8, ry+16, ss.str().c_str());
-        }
+
+        std::ostringstream ss; ss << stream << ": " << width << " x " << height << " " << format << " (" << fps << "/" << stream_framerate << ")" << ", F#: " << frame_number << ", TS: " << timestamp;
+        glColor3f(0,0,0);
+        draw_text(rx+9, ry+17, ss.str().c_str());
+        glColor3f(1,1,1);
+        draw_text(rx+8, ry+16, ss.str().c_str());
     }
 
     void show(int rx, int ry, int rw, int rh, int width, int height)

@@ -7,7 +7,6 @@
 #include <cstring> // For memcpy
 #include <cmath>
 #include <algorithm>
-
 #ifdef __SSSE3__
 #include <tmmintrin.h> // For SSE3 intrinsic used in unpack_yuy2_sse
 #endif
@@ -72,6 +71,7 @@ namespace rsimpl
     void unpack_y8_from_y16_10 (byte * const d[], const byte * s, int n) { unpack_pixels(d, n, reinterpret_cast<const uint16_t *>(s), [](uint16_t pixel) -> uint8_t  { return pixel >> 2; }); }
     void unpack_rw10_from_rw8 (byte *  const d[], const byte * s, int n)
     {
+#ifdef __SSSE3__
         auto src = reinterpret_cast<const __m128i *>(s);
         auto dst = reinterpret_cast<__m128i *>(d[0]);
 
@@ -86,6 +86,18 @@ namespace rsimpl
             __m128i  out8 = _mm_packus_epi16(out1_16, out2_16);
             _mm_store_si128(xout, out8);
         }
+#else  // Generic code for when SSSE3 is not available.
+        unsigned short* from = (unsigned short*)s;
+        byte* to = d[0];
+
+        for(int i = 0; i < n; ++i)
+        {
+          byte temp = (byte)(*from >> 2);
+          *to = temp;
+          ++from;
+          ++to;
+        }
+#endif
     }
 
     /////////////////////////////
@@ -436,18 +448,23 @@ namespace rsimpl
         memcpy(dest[0], in, count*2);
     }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmultichar"
+#ifdef __APPLE
+#pragma GCC diagnostic ignored "-Wfour-char-constants"
+#endif
     //////////////////////////
     // Native pixel formats //
     //////////////////////////
     const native_pixel_format pf_raw8       = { 'RAW8', 1, 1,{  { false, &copy_pixels<1>,                   { { RS_STREAM_FISHEYE,  RS_FORMAT_RAW8 } } } } };
     const native_pixel_format pf_rw16       = { 'RW16', 1, 2,{  { false, &copy_pixels<2>,                   { { RS_STREAM_COLOR,    RS_FORMAT_RAW16 } } } } };
-    const native_pixel_format pf_rw10       = { 'RW10', 1, 1,{  { false, &copy_raw10,                       { { RS_STREAM_COLOR,    RS_FORMAT_RAW10 } } } } };
+    const native_pixel_format pf_rw10       = { 'pRAA', 1, 1,{  { false, &copy_raw10,                       { { RS_STREAM_COLOR,    RS_FORMAT_RAW10 } } } } };
     const native_pixel_format pf_yuy2       = { 'YUY2', 1, 2,{  { true,  &unpack_yuy2<RS_FORMAT_RGB8 >,     { { RS_STREAM_COLOR,    RS_FORMAT_RGB8 } } },
                                                                 { false, &copy_pixels<2>,                   { { RS_STREAM_COLOR,    RS_FORMAT_YUYV } } },
                                                                 { true,  &unpack_yuy2<RS_FORMAT_RGBA8>,     { { RS_STREAM_COLOR,    RS_FORMAT_RGBA8 } } },
                                                                 { true,  &unpack_yuy2<RS_FORMAT_BGR8 >,     { { RS_STREAM_COLOR,    RS_FORMAT_BGR8 } } },
                                                                 { true,  &unpack_yuy2<RS_FORMAT_BGRA8>,     { { RS_STREAM_COLOR,    RS_FORMAT_BGRA8 } } } } };
-    const native_pixel_format pf_y8         = { 'Y8  ', 1, 1,{  { false, &copy_pixels<1>,                   { { RS_STREAM_INFRARED, RS_FORMAT_Y8 } } } } };
+    const native_pixel_format pf_y8         = { 'GREY', 1, 1,{  { false, &copy_pixels<1>,                   { { RS_STREAM_INFRARED, RS_FORMAT_Y8 } } } } };
     const native_pixel_format pf_y16        = { 'Y16 ', 1, 2,{  { true,  &unpack_y16_from_y16_10,           { { RS_STREAM_INFRARED, RS_FORMAT_Y16 } } } } };
     const native_pixel_format pf_y8i        = { 'Y8I ', 1, 2,{  { true,  &unpack_y8_y8_from_y8i,            { { RS_STREAM_INFRARED, RS_FORMAT_Y8 },{ RS_STREAM_INFRARED2, RS_FORMAT_Y8 } } } } };
     const native_pixel_format pf_y12i       = { 'Y12I', 1, 3,{  { true,  &unpack_y16_y16_from_y12i_10,      { { RS_STREAM_INFRARED, RS_FORMAT_Y16 },{ RS_STREAM_INFRARED2, RS_FORMAT_Y16 } } } } };
@@ -462,6 +479,7 @@ namespace rsimpl
                                                                 { true,  &unpack_y16_from_y16_10,           { { RS_STREAM_INFRARED, RS_FORMAT_Y16 } } } } };
     const native_pixel_format pf_sr300_inzi = { 'INZI', 2, 2,{  { true,  &unpack_z16_y8_from_sr300_inzi,    { { RS_STREAM_DEPTH,    RS_FORMAT_Z16 },{ RS_STREAM_INFRARED, RS_FORMAT_Y8 } } },
                                                                 { true,  &unpack_z16_y16_from_sr300_inzi,   { { RS_STREAM_DEPTH,    RS_FORMAT_Z16 },{ RS_STREAM_INFRARED, RS_FORMAT_Y16 } } } } };
+#pragma GCC diagnostic pop
 
     //////////////////
     // Deprojection //
@@ -536,7 +554,7 @@ namespace rsimpl
         auto out_z = (uint16_t *)(z_aligned_to_other);
         align_images(z_intrin, z_to_other, other_intrin, 
             [z_pixels, z_scale](int z_pixel_index) { return z_scale * z_pixels[z_pixel_index]; },
-            [out_z, z_pixels](int z_pixel_index, int other_pixel_index) { out_z[other_pixel_index] = z_pixels[z_pixel_index]; });
+            [out_z, z_pixels](int z_pixel_index, int other_pixel_index) { out_z[other_pixel_index] = out_z[other_pixel_index] ? std::min(out_z[other_pixel_index],z_pixels[z_pixel_index]) : z_pixels[z_pixel_index]; });
     }
 
     void align_disparity_to_other(byte * disparity_aligned_to_other, const uint16_t * disparity_pixels, float disparity_scale, const rs_intrinsics & disparity_intrin, const rs_extrinsics & disparity_to_other, const rs_intrinsics & other_intrin)

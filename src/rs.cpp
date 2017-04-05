@@ -9,7 +9,6 @@
 #include "sync.h"
 #include "archive.h"
 
-
 ////////////////////////
 // API implementation //
 ////////////////////////
@@ -20,7 +19,6 @@ struct rs_error
     const char * function;
     std::string args;
 };
-
 
 // This facility allows for translation of exceptions to rs_error structs at the API boundary
 namespace rsimpl
@@ -44,15 +42,63 @@ namespace rsimpl
 #define HANDLE_EXCEPTIONS_AND_RETURN(R, ...) catch(...) { std::ostringstream ss; rsimpl::stream_args(ss, #__VA_ARGS__, __VA_ARGS__); rsimpl::translate_exception(__FUNCTION__, ss.str(), error); return R; }
 #define VALIDATE_NOT_NULL(ARG) if(!(ARG)) throw std::runtime_error("null pointer passed for argument \"" #ARG "\"");
 #define VALIDATE_ENUM(ARG) if(!rsimpl::is_valid(ARG)) { std::ostringstream ss; ss << "bad enum value for argument \"" #ARG "\""; throw std::runtime_error(ss.str()); }
-#define VALIDATE_RANGE(ARG, MIN, MAX) if(ARG < MIN || ARG > MAX) { std::ostringstream ss; ss << "out of range value for argument \"" #ARG "\""; throw std::runtime_error(ss.str()); }
+#define VALIDATE_RANGE(ARG, MIN, MAX) if((ARG) < (MIN) || (ARG) > (MAX)) { std::ostringstream ss; ss << "out of range value for argument \"" #ARG "\""; throw std::runtime_error(ss.str()); }
+#define VALIDATE_LE(ARG, MAX) if((ARG) > (MAX)) { std::ostringstream ss; ss << "out of range value for argument \"" #ARG "\""; throw std::runtime_error(ss.str()); }
 #define VALIDATE_NATIVE_STREAM(ARG) VALIDATE_ENUM(ARG); if(ARG >= RS_STREAM_NATIVE_COUNT) { std::ostringstream ss; ss << "argument \"" #ARG "\" must be a native stream"; throw std::runtime_error(ss.str()); }
+
+int major(int version)
+{
+    return version / 10000;
+}
+int minor(int version)
+{
+    return (version % 10000) / 100;
+}
+int patch(int version)
+{
+    return (version % 100);
+}
+
+std::string api_version_to_string(int version)
+{
+    if (major(version) == 0) return rsimpl::to_string() << version;
+    return rsimpl::to_string() << major(version) << "." << minor(version) << "." << patch(version);
+}
+
+void report_version_mismatch(int runtime, int compiletime)
+{
+    throw std::runtime_error(rsimpl::to_string() << "API version mismatch: librealsense.so was compiled with API version " 
+        << api_version_to_string(runtime) << " but the application was compiled with " 
+        << api_version_to_string(compiletime) << "! Make sure correct version of the library is installed (make install)");
+}
 
 rs_context * rs_create_context(int api_version, rs_error ** error) try
 {
-    int runtime_api_version = rs_get_api_version(error);
-    if (*error) throw std::runtime_error(rs_get_error_message(*error));
+    rs_error * local_error = nullptr;
+    auto runtime_api_version = rs_get_api_version(&local_error);
+    if (local_error) throw std::runtime_error(rs_get_error_message(local_error));
 
-    if (api_version != runtime_api_version) throw std::runtime_error("api version mismatch");
+    if ((runtime_api_version < 10) || (api_version < 10))
+    {
+        // when dealing with version < 1.0.0 that were still using single number for API version, require exact match
+        if (api_version != runtime_api_version) 
+            report_version_mismatch(runtime_api_version, api_version);
+    }
+    else if ((major(runtime_api_version) == 1 && minor(runtime_api_version) <= 9) 
+          || (major(api_version) == 1 && minor(api_version) <= 9))
+    {
+        // when dealing with version < 1.10.0, API breaking changes are still possible without minor version change, require exact match
+        if (api_version != runtime_api_version) 
+            report_version_mismatch(runtime_api_version, api_version);
+    }
+    else
+    {
+        // starting with 1.10.0, versions with same patch are compatible
+        if ((major(api_version) != major(runtime_api_version)) 
+         || (minor(api_version) != minor(runtime_api_version))) 
+            report_version_mismatch(runtime_api_version, api_version);
+    }
+
     return rs_context_base::acquire_instance();
 }
 HANDLE_EXCEPTIONS_AND_RETURN(nullptr, api_version)
@@ -179,7 +225,7 @@ void rs_enable_stream(rs_device * device, rs_stream stream, int width, int heigh
     VALIDATE_RANGE(height, 0, INT_MAX);
     VALIDATE_ENUM(format);
     VALIDATE_RANGE(framerate, 0, INT_MAX);
-    device->enable_stream(stream, width, height, format, framerate, RS_OUTPUT_BUFFER_FORMAT_CONTINOUS);
+    device->enable_stream(stream, width, height, format, framerate, RS_OUTPUT_BUFFER_FORMAT_CONTINUOUS);
 }
 HANDLE_EXCEPTIONS_AND_RETURN(, device, stream, width, height, format, framerate)
 
@@ -203,7 +249,7 @@ HANDLE_EXCEPTIONS_AND_RETURN(, device, stream)
 int rs_is_stream_enabled(const rs_device * device, rs_stream stream, rs_error ** error) try
 {
     VALIDATE_NOT_NULL(device);
-    VALIDATE_ENUM(stream);
+    VALIDATE_NATIVE_STREAM(stream);
     return device->get_stream_interface(stream).is_enabled();
 }
 HANDLE_EXCEPTIONS_AND_RETURN(0, device, stream)
@@ -260,7 +306,7 @@ HANDLE_EXCEPTIONS_AND_RETURN(, device, intrinsic)
 void rs_set_frame_callback(rs_device * device, rs_stream stream, rs_frame_callback_ptr on_frame, void * user, rs_error ** error) try
 {
     VALIDATE_NOT_NULL(device);
-    VALIDATE_ENUM(stream);
+    VALIDATE_NATIVE_STREAM(stream);
     VALIDATE_NOT_NULL(on_frame);
     device->set_stream_callback(stream, on_frame, user);
 }
@@ -269,7 +315,7 @@ HANDLE_EXCEPTIONS_AND_RETURN(, device, stream, on_frame, user)
 void rs_set_frame_callback_cpp(rs_device * device, rs_stream stream, rs_frame_callback * callback, rs_error ** error) try
 {
     VALIDATE_NOT_NULL(device);
-    VALIDATE_ENUM(stream);
+    VALIDATE_NATIVE_STREAM(stream);
     VALIDATE_NOT_NULL(callback);
     device->set_stream_callback(stream, callback);
 }
@@ -396,10 +442,34 @@ HANDLE_EXCEPTIONS_AND_RETURN(0, device)
 int rs_supports(rs_device * device, rs_capabilities capability, rs_error ** error) try
 {
     VALIDATE_NOT_NULL(device);
+    VALIDATE_ENUM(capability);
     return device->supports(capability);
 }
 HANDLE_EXCEPTIONS_AND_RETURN(0, device)
 
+int rs_supports_camera_info(rs_device * device, rs_camera_info info_param, rs_error ** error) try
+{
+    VALIDATE_NOT_NULL(device);
+    VALIDATE_ENUM(info_param);
+    return device->supports(info_param);
+}
+HANDLE_EXCEPTIONS_AND_RETURN(0, device)
+
+double rs_get_detached_frame_metadata(const rs_frame_ref * frame, rs_frame_metadata frame_metadata, rs_error ** error) try
+{
+    VALIDATE_NOT_NULL(frame);
+    VALIDATE_ENUM(frame_metadata);
+    return frame->get_frame_metadata(frame_metadata);
+}
+HANDLE_EXCEPTIONS_AND_RETURN(0, frame)
+
+int rs_supports_frame_metadata(const rs_frame_ref * frame, rs_frame_metadata frame_metadata, rs_error ** error) try
+{
+    VALIDATE_NOT_NULL(frame);
+    VALIDATE_ENUM(frame_metadata);
+    return frame->supports_frame_metadata(frame_metadata);
+}
+HANDLE_EXCEPTIONS_AND_RETURN(0, frame)
 
 double rs_get_frame_timestamp(const rs_device * device, rs_stream stream, rs_error ** error) try
 {
@@ -602,7 +672,7 @@ HANDLE_EXCEPTIONS_AND_RETURN(, device, options, count)
 void rs_get_device_options(rs_device * device, const rs_option options[], unsigned int count, double values[], rs_error ** error) try
 {
     VALIDATE_NOT_NULL(device);
-    VALIDATE_RANGE(count, 0, INT_MAX);
+    VALIDATE_LE(count, INT_MAX);
     VALIDATE_NOT_NULL(options);
     for(size_t i=0; i<count; ++i) VALIDATE_ENUM(options[i]);
     VALIDATE_NOT_NULL(values);
@@ -613,7 +683,7 @@ HANDLE_EXCEPTIONS_AND_RETURN(, device, options, count, values)
 void rs_set_device_options(rs_device * device, const rs_option options[], unsigned int count, const double values[], rs_error ** error) try
 {
     VALIDATE_NOT_NULL(device);
-    VALIDATE_RANGE(count, 0, INT_MAX);
+    VALIDATE_LE(count, INT_MAX);
     VALIDATE_NOT_NULL(options);
     for(size_t i=0; i<count; ++i) VALIDATE_ENUM(options[i]);
     VALIDATE_NOT_NULL(values);
@@ -693,6 +763,8 @@ const char * rs_event_to_string(rs_event_source event)   { return rsimpl::get_st
 const char * rs_blob_type_to_string(rs_blob_type type) { return rsimpl::get_string(type); }
 const char * rs_camera_info_to_string(rs_camera_info info) { return rsimpl::get_string(info); }
 const char * rs_timestamp_domain_to_string(rs_timestamp_domain info){ return rsimpl::get_string(info); }
+
+const char * rs_frame_metadata_to_string(rs_frame_metadata md) { return rsimpl::get_string(md); }
 
 void rs_log_to_console(rs_log_severity min_severity, rs_error ** error) try
 {

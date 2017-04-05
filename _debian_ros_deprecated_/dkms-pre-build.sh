@@ -22,7 +22,7 @@ else
 fi
 
 PACKAGE_NAME="uvcvideo"
-PACKAGE_VERSION="1.1.1-1-realsense"
+PACKAGE_VERSION="1.1.1-3-realsense"
 
 PATCH_DIR="/usr/src/${PACKAGE_NAME}-${PACKAGE_VERSION}/patches/"
 PATCH="/dev/null"
@@ -43,13 +43,10 @@ currentdir=$(pwd)
 if [ ${workdir} = ${currentdir} ]
 then
     echo ""
-    echo "ERROR: Could not download kernel sources."
-    echo "       Ensure the 'deb-src' entry for your kernel is uncommented"
-    echo "       in /etc/apt/sources.list or /etc/apt/sources.list.d/*"
-    echo "       then update APT before retrying this package:"
-    echo "           sudo apt-get update"
-    # See: http://askubuntu.com/questions/496549/error-you-must-put-some-source-uris-in-your-sources-list"
-    echo "       See: http://tinyurl.com/pxbtvh5"
+    echo "ERROR: Could not download the required kernel sources to install RealSense camera support."
+    echo ""
+    echo "       To resolve, please follow the installation directions at:"
+    echo "           http://wiki.ros.org/librealsense#Installation_Prerequisites"
     echo ""
     exit 86
 fi
@@ -59,18 +56,18 @@ fi
 
 # Check for uvcvideo patches in drivers/media/usb/uvc/uvc_driver.c
 UVC_MODULE_PATH="drivers/media/usb/uvc"
-PATCHED_FORMATS=$(/bin/egrep '\((Y8I|Y12I|Z16|RW10|INVZ|INZI|INVR|INRI|INVI|RELI)\)' \
+PATCHED_FORMATS=$(/bin/egrep '\((Y8I|Y12I|Z16|SRGGB10P|RAW8|RW16|INVZ|INZI|INVR|INRI|INVI|RELI|L8|L16|D16)\)' \
     ${UVC_MODULE_PATH}/uvc_driver.c | /usr/bin/wc -l)
 case "${PATCHED_FORMATS}" in
-  10)
-    echo "INFO: Intel RealSense(TM) F200, R200, and SR300 cameras are already supported."
+  15)
+    echo "INFO: Intel RealSense(TM) F200, SR300, R200, LR200, and ZR300 cameras are already supported."
   ;;
-  3)
-    PATCH="${PATCH_DIR}/realsense-uvcvideo-add-7-formats.patch"
+  4)
+    PATCH="${PATCH_DIR}/realsense-uvcvideo-add-to-upstreamed.patch"
     echo "INFO: Only Intel RealSense(TM) R200 camera is currently supported."
   ;;
   *)
-    PATCH="${PATCH_DIR}/realsense-uvcvideo-add-10-formats.patch"
+    PATCH="${PATCH_DIR}/realsense-uvcvideo-no-upstreamed.patch"
     echo "INFO: No Intel RealSense(TM) cameras are currently supported."
   ;;
 esac

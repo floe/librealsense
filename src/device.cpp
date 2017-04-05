@@ -10,19 +10,18 @@
 #include <array>
 #include <algorithm>
 #include <sstream>
+#include <iostream>
 
 using namespace rsimpl;
 using namespace rsimpl::motion_module;
 
-const int MAX_FRAME_QUEUE_SIZE = 20;
-const int MAX_EVENT_QUEUE_SIZE = 500;
-const int MAX_EVENT_TINE_OUT   = 10;
+const int NUMBER_OF_FRAMES_TO_SAMPLE = 5;
 
 rs_device_base::rs_device_base(std::shared_ptr<rsimpl::uvc::device> device, const rsimpl::static_device_info & info, calibration_validator validator) : device(device), config(info),
     depth(config, RS_STREAM_DEPTH, validator), color(config, RS_STREAM_COLOR, validator), infrared(config, RS_STREAM_INFRARED, validator), infrared2(config, RS_STREAM_INFRARED2, validator), fisheye(config, RS_STREAM_FISHEYE, validator),
     points(depth), rect_color(color), color_to_depth(color, depth), depth_to_color(depth, color), depth_to_rect_color(depth, rect_color), infrared2_to_depth(infrared2,depth), depth_to_infrared2(depth,infrared2),
-    capturing(false), data_acquisition_active(false), max_publish_list_size(MAX_FRAME_QUEUE_SIZE), event_queue_size(MAX_EVENT_QUEUE_SIZE), events_timeout(MAX_EVENT_TINE_OUT),
-    usb_port_id(""), motion_module_ready(false), keep_fw_logger_alive(false)
+    capturing(false), data_acquisition_active(false), max_publish_list_size(RS_USER_QUEUE_SIZE), event_queue_size(RS_MAX_EVENT_QUEUE_SIZE), events_timeout(RS_MAX_EVENT_TIME_OUT),
+    usb_port_id(""), motion_module_ready(false), keep_fw_logger_alive(false), frames_drops_counter(0)
 {
     streams[RS_STREAM_DEPTH    ] = native_streams[RS_STREAM_DEPTH]     = &depth;
     streams[RS_STREAM_COLOR    ] = native_streams[RS_STREAM_COLOR]     = &color;
@@ -90,7 +89,7 @@ rs_motion_intrinsics rs_device_base::get_motion_intrinsics() const
     throw std::runtime_error("Motion intrinsic is not supported for this device");
 }
 
-rs_extrinsics rs_device_base::get_motion_extrinsics_from(rs_stream from) const
+rs_extrinsics rs_device_base::get_motion_extrinsics_from(rs_stream /*from*/) const
 {
     throw std::runtime_error("Motion extrinsics does not supported");
 }
@@ -317,6 +316,12 @@ void rs_device_base::stop_fw_logger()
     fw_logger->join();
 }
 
+struct drops_status
+{
+    bool was_initialized = false;
+    unsigned long long prev_frame_counter = 0;
+};
+
 void rs_device_base::start_video_streaming()
 {
     if(capturing) throw std::runtime_error("cannot restart device without first stopping device");
@@ -333,7 +338,7 @@ void rs_device_base::start_video_streaming()
     // dispatching the uvc configuration for a requested stream to the hardware
     for(auto mode_selection : selected_modes)
     {
-        assert(mode_selection.mode.subdevice <= timestamp_readers.size());
+        assert(static_cast<size_t>(mode_selection.mode.subdevice) <= timestamp_readers.size());
         auto timestamp_reader = timestamp_readers[mode_selection.mode.subdevice];
 
         // Create a stream buffer for each stream served by this subdevice mode
@@ -348,25 +353,48 @@ void rs_device_base::start_video_streaming()
         for (auto & output : mode_selection.get_outputs())
         {
             streams.push_back(output.first);
-        }       
+        }     
+
+        auto supported_metadata_vector = std::make_shared<std::vector<rs_frame_metadata>>(config.info.supported_metadata_vector);
+
+        auto actual_fps_calc = std::make_shared<fps_calc>(NUMBER_OF_FRAMES_TO_SAMPLE, mode_selection.get_framerate());
+        std::shared_ptr<drops_status> frame_drops_status(new drops_status{});
         // Initialize the subdevice and set it to the selected mode
         set_subdevice_mode(*device, mode_selection.mode.subdevice, mode_selection.mode.native_dims.x, mode_selection.mode.native_dims.y, mode_selection.mode.pf.fourcc, mode_selection.mode.fps, 
-            [this, mode_selection, archive, timestamp_reader, streams, capture_start_time](const void * frame, std::function<void()> continuation) mutable
+            [this, mode_selection, archive, timestamp_reader, streams, capture_start_time, frame_drops_status, actual_fps_calc, supported_metadata_vector](const void * frame, std::function<void()> continuation) mutable
         {
-            auto now = std::chrono::system_clock::now().time_since_epoch();
-            auto sys_time = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+            auto now = std::chrono::system_clock::now();
+            auto sys_time = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
             frame_continuation release_and_enqueue(continuation, frame);
 
             // Ignore any frames which appear corrupted or invalid
             if (!timestamp_reader->validate_frame(mode_selection.mode, frame)) return;
+            
+            auto actual_fps = actual_fps_calc->calc_fps(now);
 
             // Determine the timestamp for this frame
-            auto timestamp = timestamp_reader->get_frame_timestamp(mode_selection.mode, frame);
+            auto timestamp = timestamp_reader->get_frame_timestamp(mode_selection.mode, frame, actual_fps);
             auto frame_counter = timestamp_reader->get_frame_counter(mode_selection.mode, frame);
             auto recieved_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - capture_start_time).count();
 
             auto requires_processing = mode_selection.requires_processing();
+
+            double exposure_value[1] = {};
+            if (streams[0] == rs_stream::RS_STREAM_FISHEYE)
+            {
+                // fisheye exposure value is embedded in the frame data from version 1.27.2.90
+                firmware_version firmware(get_camera_info(RS_CAMERA_INFO_ADAPTER_BOARD_FIRMWARE_VERSION));
+                if (firmware >= firmware_version("1.27.2.90"))
+                {
+                    auto data = static_cast<const char*>(frame);
+                    int exposure = 0; // Embedded Fisheye exposure value is in units of 0.2 mSec
+                    for (int i = 4, j = 0; i < 12; ++i, ++j)
+                        exposure |= ((data[i] & 0x01) << j);
+
+                    exposure_value[0] = exposure * 0.2 * 10.;
+                }
+            }
 
             auto width = mode_selection.get_width();
             auto height = mode_selection.get_height();
@@ -378,6 +406,15 @@ void rs_device_base::start_video_streaming()
             for (auto & output : mode_selection.get_outputs())
             {
                 LOG_DEBUG("FrameAccepted, RecievedAt," << recieved_time << ", FWTS," << timestamp << ", DLLTS," << recieved_time << ", Type," << rsimpl::get_string(output.first) << ",HasPair,0,F#," << frame_counter);
+            }
+            
+            frame_drops_status->was_initialized = true;
+
+            // Not updating prev_frame_counter when first frame arrival
+            if (frame_drops_status->was_initialized)
+            {
+                frames_drops_counter.fetch_add(frame_counter - frame_drops_status->prev_frame_counter - 1);
+                frame_drops_status->prev_frame_counter = frame_counter;
             }
 
             for (auto & output : mode_selection.get_outputs())
@@ -394,10 +431,14 @@ void rs_device_base::start_video_streaming()
                     bpp,
                     output.second,
                     output.first,
-                    mode_selection.pad_crop);
+                    mode_selection.pad_crop,
+                    supported_metadata_vector,
+                    exposure_value[0],
+                    actual_fps);
 
                 // Obtain buffers for unpacking the frame
                 dest.push_back(archive->alloc_frame(output.first, additional_data, requires_processing));
+
 
                 if (motion_module_ready) // try to correct timestamp only if motion module is enabled
                 {
@@ -482,7 +523,7 @@ rs_frame_ref* ::rs_device_base::clone_frame(rs_frame_ref* frame)
 
 void rs_device_base::update_device_info(rsimpl::static_device_info& info)
 {
-    info.options.push_back({ RS_OPTION_FRAMES_QUEUE_SIZE,     1, MAX_FRAME_QUEUE_SIZE,      1, MAX_FRAME_QUEUE_SIZE });
+    info.options.push_back({ RS_OPTION_FRAMES_QUEUE_SIZE,     1, RS_USER_QUEUE_SIZE,      1, RS_USER_QUEUE_SIZE });
 }
 
 const char * rs_device_base::get_option_description(rs_option option) const
@@ -522,8 +563,8 @@ const char * rs_device_base::get_option_description(rs_option option) const
     case RS_OPTION_R200_LR_EXPOSURE                                : return "This control allows manual adjustment of the exposure time value for the L/R imagers";
     case RS_OPTION_R200_EMITTER_ENABLED                            : return "Enables / disables R200 emitter";
     case RS_OPTION_R200_DEPTH_UNITS                                : return "Micrometers per increment in integer depth values, 1000 is default (mm scale). Set before streaming";
-    case RS_OPTION_R200_DEPTH_CLAMP_MIN                            : return "Minimum depth in current depth units that will be output. Any values less than ‘Min Depth’ will be mapped to 0 during the conversion between disparity and depth. Set before streaming";
-    case RS_OPTION_R200_DEPTH_CLAMP_MAX                            : return "Maximum depth in current depth units that will be output. Any values greater than ‘Max Depth’ will be mapped to 0 during the conversion between disparity and depth. Set before streaming";
+    case RS_OPTION_R200_DEPTH_CLAMP_MIN                            : return "Minimum depth in current depth units that will be output. Any values less than 'Min Depth' will be mapped to 0 during the conversion between disparity and depth. Set before streaming";
+    case RS_OPTION_R200_DEPTH_CLAMP_MAX                            : return "Maximum depth in current depth units that will be output. Any values greater than 'Max Depth' will be mapped to 0 during the conversion between disparity and depth. Set before streaming";
     case RS_OPTION_R200_DISPARITY_MULTIPLIER                       : return "The disparity scale factor used when in disparity output mode. Can only be set before streaming";
     case RS_OPTION_R200_DISPARITY_SHIFT                            : return "{0 - 512}. Can only be set before streaming starts";
     case RS_OPTION_R200_AUTO_EXPOSURE_MEAN_INTENSITY_SET_POINT     : return "(Requires LR-Auto-Exposure ON) Mean intensity set point";
@@ -548,7 +589,7 @@ const char * rs_device_base::get_option_description(rs_option option) const
     case RS_OPTION_FISHEYE_EXPOSURE                                : return "Fisheye image exposure time in msec";
     case RS_OPTION_FISHEYE_GAIN                                    : return "Fisheye image gain";
     case RS_OPTION_FISHEYE_STROBE                                  : return "Enables / disables fisheye strobe. When enabled this will align timestamps to common clock-domain with the motion events";
-    case RS_OPTION_FISHEYE_EXTERNAL_TRIGGER                        : return "Enables / disables fisheye external trigger mode. When enabled fisheye image will be aquired in-sync with the depth image";
+    case RS_OPTION_FISHEYE_EXTERNAL_TRIGGER                        : return "Enables / disables fisheye external trigger mode. When enabled fisheye image will be acquired in-sync with the depth image";
     case RS_OPTION_FRAMES_QUEUE_SIZE                               : return "Number of frames the user is allowed to keep per stream. Trying to hold-on to more frames will cause frame-drops.";
     case RS_OPTION_FISHEYE_ENABLE_AUTO_EXPOSURE                    : return "Enable / disable fisheye auto-exposure";
     case RS_OPTION_FISHEYE_AUTO_EXPOSURE_MODE                      : return "0 - static auto-exposure, 1 - anti-flicker auto-exposure, 2 - hybrid";
@@ -556,6 +597,7 @@ const char * rs_device_base::get_option_description(rs_option option) const
     case RS_OPTION_FISHEYE_AUTO_EXPOSURE_PIXEL_SAMPLE_RATE         : return "In Fisheye auto-exposure sample frame every given number of pixels";
     case RS_OPTION_FISHEYE_AUTO_EXPOSURE_SKIP_FRAMES               : return "In Fisheye auto-exposure sample every given number of frames";
     case RS_OPTION_HARDWARE_LOGGER_ENABLED                         : return "Enables / disables fetching diagnostic information from hardware (and writting the results to log)";
+    case RS_OPTION_TOTAL_FRAME_DROPS                               : return "Total number of detected frame drops from all streams";
     default: return rs_option_to_string(option);
     }
 }
@@ -579,6 +621,12 @@ bool rs_device_base::supports(rs_capabilities capability) const
         }
     }
     return found && version_ok;
+}
+
+bool rs_device_base::supports(rs_camera_info info_param) const
+{
+    auto it = config.info.camera_info.find(info_param);
+    return (it != config.info.camera_info.end());
 }
 
 void rs_device_base::get_option_range(rs_option option, double & min, double & max, double & step, double & def)
@@ -618,6 +666,9 @@ void rs_device_base::set_options(const rs_option options[], size_t count, const 
         case  RS_OPTION_FRAMES_QUEUE_SIZE:
             max_publish_list_size = (uint32_t)values[i];
             break;
+        case RS_OPTION_TOTAL_FRAME_DROPS:
+            frames_drops_counter = (uint32_t)values[i];
+            break;
         default:
             LOG_WARNING("Cannot set " << options[i] << " to " << values[i] << " on " << get_name());
             throw std::logic_error("Option unsupported");
@@ -634,6 +685,9 @@ void rs_device_base::get_options(const rs_option options[], size_t count, double
         {
         case  RS_OPTION_FRAMES_QUEUE_SIZE:
             values[i] = max_publish_list_size;
+            break;
+        case  RS_OPTION_TOTAL_FRAME_DROPS:
+            values[i] = frames_drops_counter;
             break;
         default:
             LOG_WARNING("Cannot get " << options[i] << " on " << get_name());

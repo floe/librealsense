@@ -185,7 +185,7 @@ namespace rsimpl
     public:
         fisheye_auto_exposure_state() :
             is_auto_exposure(true),
-            mode(auto_exposure_modes::static_auto_exposure),
+            mode(auto_exposure_modes::auto_exposure_hybrid),
             rate(60),
             sample_rate(1),
             skip_frames(2)
@@ -237,12 +237,13 @@ namespace rsimpl
         template <typename T> inline T sqr(const T& x) { return (x*x); }
         void histogram_score(std::vector<int>& h, const int total_weight, histogram_metric& score);
 
-        float minimal_exposure = 0.25f, maximal_exposure = 20.f, base_gain = 2.0f, gain_limit = 15.0f;
+
+        float minimal_exposure = 0.1f, maximal_exposure = 20.f, base_gain = 2.0f, gain_limit = 15.0f;
         float exposure = 10.0f, gain = 2.0f, target_exposure = 0.0f;
         uint8_t under_exposure_limit = 5, over_exposure_limit = 250; int under_exposure_noise_limit = 50, over_exposure_noise_limit = 50;
         int direction = 0, prev_direction = 0; float hysteresis = 0.075f;// 05;
-        float eps = 0.01f, exposure_step = 0.05f, minimal_exposure_step = 0.15f;
-        fisheye_auto_exposure_state state; float flicker_cycle; bool anti_flicker_mode = false;
+        float eps = 0.01f, exposure_step = 0.1f, minimal_exposure_step = 0.01f;
+        fisheye_auto_exposure_state state; float flicker_cycle; bool anti_flicker_mode = true;
         std::recursive_mutex state_mutex;
     };
 
@@ -305,8 +306,8 @@ namespace rsimpl
         void get_option_range(rs_option option, double & min, double & max, double & step, double & def) override;
         void set_options(const rs_option options[], size_t count, const double values[]) override;
         void get_options(const rs_option options[], size_t count, double values[]) override;
-        void send_blob_to_device(rs_blob_type type, void * data, int size);
-        bool supports_option(rs_option option) const;
+        void send_blob_to_device(rs_blob_type type, void * data, int size) override;
+        bool supports_option(rs_option option) const override;
 
         void start_motion_tracking() override;
         void stop_motion_tracking() override;
